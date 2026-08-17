@@ -77,7 +77,7 @@
 - Android 12+ (API 31+)
 - ARM64-v8a architecture
 
-> **Note**: Only tested on HTP v79 devices (e.g. Snapdragon 8 Gen 3). Other HTP versions (v68/v69/v73/v75/v81) are not guaranteed to work perfectly.
+> **Note**: Only tested on HTP v79 devices (e.g. Snapdragon 8 Elite). Other HTP versions (v68/v69/v73/v75/v81) are not guaranteed to work perfectly.
 
 ### Software
 
