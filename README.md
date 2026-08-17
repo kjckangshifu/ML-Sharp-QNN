@@ -82,7 +82,9 @@
 | Tool | Version | Notes |
 |---|---|---|
 | JDK | 17 | Required for Kotlin compilation |
-| Android SDK | command-line tools | [Download](https://developer.android.com/studio#command-line-tools-only) |
+| Android SDK command-line tools | latest | Base package, provides `sdkmanager` only, [Download](https://developer.android.com/studio#command-line-tools-only) |
+| SDK Platform | android-35 | Install via `sdkmanager "platforms;android-35"` |
+| Build Tools | 35.0.0 | Install via `sdkmanager "build-tools;35.0.0"` |
 | NDK | 29.0.14206865 | Install via `sdkmanager "ndk;29.0.14206865"` |
 | CMake | 3.22.1+ | Install via `sdkmanager "cmake;3.22.1"` |
 | Qualcomm QNN SDK | 2.48.0 | [Download](https://apigwx-aws.qualcomm.com/qsc/public/v1/api/download/software/sdks/Qualcomm_AI_Runtime_Community/All/2.48.0.260626/v2.48.0.260626.zip) |

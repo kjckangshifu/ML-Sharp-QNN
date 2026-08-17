@@ -82,7 +82,9 @@
 | 工具 | 版本 | 备注 |
 |---|---|---|
 | JDK | 17 | Kotlin 编译所需 |
-| Android SDK | command-line tools | [下载](https://developer.android.com/studio#command-line-tools-only) |
+| Android SDK command-line tools | latest | 基础工具包，仅提供 `sdkmanager`，[下载](https://developer.android.com/studio#command-line-tools-only) |
+| SDK Platform | android-35 | 通过 `sdkmanager "platforms;android-35"` 安装 |
+| Build Tools | 35.0.0 | 通过 `sdkmanager "build-tools;35.0.0"` 安装 |
 | NDK | 29.0.14206865 | 通过 `sdkmanager "ndk;29.0.14206865"` 安装 |
 | CMake | 3.22.1+ | 通过 `sdkmanager "cmake;3.22.1"` 安装 |
 | Qualcomm QNN SDK | 2.48.0 | [下载](https://apigwx-aws.qualcomm.com/qsc/public/v1/api/download/software/sdks/Qualcomm_AI_Runtime_Community/All/2.48.0.260626/v2.48.0.260626.zip) |
