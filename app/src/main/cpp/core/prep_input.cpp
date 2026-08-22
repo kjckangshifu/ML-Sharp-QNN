@@ -1,7 +1,7 @@
-/* prep_input.cpp — 复现 e2e/prep_input.py 的图片预处理
+ /*
  * prep_input.cpp — image preprocessing replicating e2e/prep_input.py
  *
- *   stb_image (纯源码单头文件, 支持 JPEG/PNG/WebP/BMP/GIF 等) 读图
+ *   PNG/WebP/BMP/GIF 等) 读图
  *   stb_image (single-header source, supports JPEG/PNG/WebP/BMP/GIF etc.) decodes the image
  *   + exif.c 解析 EXIF (Orientation 自动旋转 + 焦距读取, 同原项目 io.py)
  *   + exif.c parses EXIF (automatic Orientation rotation + focal length, like io.py)
@@ -14,19 +14,19 @@
  *       独立命令行入口 main() 需定义 PREP_INPUT_STANDALONE (桌面端调试用)
  *       a standalone main() requires PREP_INPUT_STANDALONE (desktop debugging)
  *
- * 与 prep_input.py / 原项目 io.load_rgb 对齐的细节:
+ * 原项目 io.load_rgb 对齐的细节:
  * Alignment details with prep_input.py / io.load_rgb:
- *   - EXIF Orientation 3/6/8 -> 旋转 180/270/90 度 (先旋转后算 f_px)
+ *   270/90 度 (先旋转后算 f_px)
  *   - EXIF Orientation 3/6/8 -> rotate 180/270/90 degrees (rotate before computing f_px)
  *   - 焦距: FocalLengthIn35mmFilm 优先; 否则 FocalLength (<10mm *8.4);
  *   - Focal length: FocalLengthIn35mmFilm first; otherwise FocalLength (<10mm *8.4);
  *     都没有用 30mm
  *     otherwise 30mm
- *   - f_px = f_mm * sqrt(w^2+h^2) / sqrt(36^2+24^2)  (旋转后的 w/h)
+ *   h)
  *   - f_px = f_mm * sqrt(w^2+h^2) / sqrt(36^2+24^2)  (w/h after rotation)
  *   - 读图: stb 解码为 3 通道 RGB (PNG 等无损格式与 PIL 逐位一致;
  *   - Decode: stb yields 3-channel RGB (lossless formats match PIL bit-for-bit;
- *     JPEG 与 PIL(libjpeg) 有 ±3/255 解码器差异, 对量化推理无感知影响)
+ *     255 解码器差异, 对量化推理无感知影响)
  *     JPEG differs from PIL/libjpeg by ±3/255 at the decoder, imperceptible for quantized inference)
  *   - resize: bilinear align_corners=True, 与 torch CPU 实现同公式 (float 精度)
  *   - resize: bilinear align_corners=True, same formula as the torch CPU kernel (float precision)
@@ -60,9 +60,8 @@ static double focal_length_from_exif(const ExifData *ex)
     return f;
 }
 
-/* 按 EXIF Orientation 旋转 (PIL transpose 语义), HWC uint8 像素
- * Rotates by EXIF Orientation (PIL transpose semantics), HWC uint8 pixels.
- * 在 uint8 域旋转 (旋转 = 元素重排, 无插值/算术, 与 float 域旋转逐位等价):
+ /* Rotates by EXIF Orientation (PIL transpose semantics), HWC uint8 pixels.
+ * 算术, 与 float 域旋转逐位等价):
  * Rotation happens in the uint8 domain (rotation = element reorder, no interpolation
  * or arithmetic, bit-equivalent to rotating in float):
  * 48MP 时峰值从 src+out 两份 float (2*576MB=1.15GB) 降到两份 uint8 (2*144MB=288MB),
@@ -120,7 +119,7 @@ static void resize_bilinear(const float *src, int src_w, int src_h, int ch,
 
     for (int oy = 0; oy < OUT_SIZE; oy++) {
         const float h1r = oy * rh;
-        const int   h1  = (int)h1r;                        /* 截断 (正数=floor) / truncation (floor for positives) */
+        const int   h1  = (int)h1r;                        /* truncation (floor for positives) */
         const int   h1p = (h1 < src_h - 1) ? 1 : 0;
         const float h1l = h1r - h1;
         const float h0l = 1.0f - h1l;
@@ -145,9 +144,7 @@ static void resize_bilinear(const float *src, int src_w, int src_h, int ch,
     }
 }
 
-// Android 构建中本文件以库模式编译 (sharp_prep_image), main() 为死代码;
 // In the Android build this file compiles in library mode (sharp_prep_image); main() is dead code.
-// 桌面端独立调试时定义 PREP_INPUT_STANDALONE 启用命令行入口
 // Define PREP_INPUT_STANDALONE for a standalone CLI entry on desktop debugging
 #ifdef PREP_INPUT_STANDALONE
 
@@ -189,7 +186,6 @@ int main(int argc, char **argv)
         return 1;
     }
 
-    /* 先 uint8 域旋转 (峰值 288MB), 再转 float (单份 576MB) —
      * Rotate in the uint8 domain first (peak 288MB), then convert to float (one 576MB buffer) —
      * 避免 float 域旋转时 src+out 双份 float (1.15GB) 同存
      * avoids holding both src+out floats (1.15GB) during a float-domain rotation. */

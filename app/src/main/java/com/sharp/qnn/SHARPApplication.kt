@@ -13,10 +13,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.runBlocking
 
 /**
- * 应用入口。
  * Application entry point.
  *
  * 在 onCreate 中加载 native 库 `libsharp_qnn.so`，并以懒加载方式创建应用级
@@ -49,7 +47,6 @@ class SHARPApplication : Application() {
 
     override fun attachBaseContext(base: Context) {
         // attachBaseContext 阶段 Application 尚未完全初始化, DataStore 不可用
-        // 使用 SharedPreferences 轻量读取语言设置
         // During attachBaseContext the Application is not fully initialized and
         // DataStore is unavailable. Use SharedPreferences to read the language.
         val prefs = base.getSharedPreferences(LANG_PREFS, Context.MODE_PRIVATE)
@@ -61,7 +58,6 @@ class SHARPApplication : Application() {
         super.onCreate()
         System.loadLibrary("sharp_qnn")
 
-        // 冷启动且日志开关开启时自动启动记录服务 (后台恢复不触发)
         // Auto-start the recording service on cold start when the toggle is on
         // (not when restored from background)
         appScope.launch {
@@ -71,11 +67,9 @@ class SHARPApplication : Application() {
         }
     }
 
-    /** 设置仓库：管理存储位置、PLY 保存目录、HTP 性能调度等偏好 */
     /** Settings repository: storage locations, PLY save dir, HTP perf scheduling, etc. */
     val settingsRepository: SettingsRepository by lazy { SettingsRepository(this) }
 
-    /** 模型仓库：管理 PE / IE / REST_A / REST_B / REST_C 五个槽位的导入、编译与持久化 */
     /** Model store: import, compile and persist the five slots PE / IE / REST_A / REST_B / REST_C */
     val modelStore: ModelStore by lazy { ModelStore(this, settingsRepository) }
 

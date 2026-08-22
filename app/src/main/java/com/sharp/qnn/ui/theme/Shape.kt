@@ -10,13 +10,13 @@ import androidx.compose.ui.unit.dp
  *
  * 完整覆盖 MD3 规范的 corner 级别:
  * Covers all MD3 spec corner levels:
- * - none:        0dp    — 无圆角 / no rounding
- * - extraSmall:  4dp    — Snackbar、小元素 / Snackbars, small elements
- * - small:       8dp    — 文本字段、菜单 / text fields, menus
- * - medium:      12dp   — 卡片 / cards
- * - large:       16dp   — FAB、导航抽屉 / FABs, navigation drawers
- * - extraLarge:  28dp   — 对话框、底部弹出 / dialogs, bottom sheets
- * - full:        50%    — 按钮、Chip、Badge (完全圆角) / buttons, chips, badges (fully rounded)
+ * no rounding
+ * Snackbars, small elements
+ * text fields, menus
+ * cards
+ * FABs, navigation drawers
+ * dialogs, bottom sheets
+ * buttons, chips, badges (fully rounded)
  */
 val Shapes = Shapes(
     extraSmall = RoundedCornerShape(4.dp),

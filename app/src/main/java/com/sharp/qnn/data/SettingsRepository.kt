@@ -8,6 +8,7 @@ import androidx.annotation.StringRes
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
+import androidx.datastore.preferences.core.doublePreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
@@ -17,7 +18,6 @@ import com.sharp.qnn.SHARPApplication
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 
-/** 应用级 DataStore (Preferences)，保证进程内单例 */
 /** App-level DataStore (Preferences), a process-wide singleton */
 private val Context.settingsDataStore: DataStore<Preferences> by preferencesDataStore(name = "sharp_settings")
 
@@ -25,7 +25,6 @@ private val Context.settingsDataStore: DataStore<Preferences> by preferencesData
  * 设置仓库：基于 DataStore Preferences 管理用户偏好。
  * Settings repository: manages user preferences via DataStore Preferences.
  *
- * 管理项:
  * Managed items:
  * - plySaveLocation:      PLY 保存目录 (SAF tree Uri 字符串, 空 = 未设置)
  * - plySaveLocation:      PLY save directory (SAF tree Uri string; empty = not set)
@@ -33,11 +32,11 @@ private val Context.settingsDataStore: DataStore<Preferences> by preferencesData
  * - showImageDetails:     whether to show detailed image info (focal length, format, ...)
  * - logRecording:         是否记录日志到下载目录 sharp_log/
  * - logRecording:         whether to record logs into Download/sharp_log/
- * - language:             界面语言 (SYSTEM / ZH / EN, 默认跟随系统)
+ * ZH / EN, 默认跟随系统)
  * - language:             UI language (SYSTEM / ZH / EN; SYSTEM follows the device by default)
- * - downloadSource:      模型下载源 (HG / HM, 默认HG; 中国用户可选择HM镜像站加速)
+ * HM, 默认HG; 中国用户可选择HM镜像站加速)
  * - downloadSource:      model download source (HG / HM, defaults to HG; Chinese users may prefer HM mirror for faster speed)
- * - HTP 性能调度 (perfType/lockedCorner/rangeMin/rangeTarget/rangeMax/dcvsMode)
+ * lockedCorner/rangeMin/rangeTarget/rangeMax/dcvsMode)
  * - HTP performance scheduling (perfType/lockedCorner/rangeMin/rangeTarget/rangeMax/dcvsMode)
  */
 class SettingsRepository(private val context: Context) {
@@ -55,15 +54,21 @@ class SettingsRepository(private val context: Context) {
         val PERF_RANGE_MAX = intPreferencesKey("perf_range_max")
         val PERF_DCVS_MODE = intPreferencesKey("perf_dcvs_mode")
         val DOWNLOAD_SOURCE = stringPreferencesKey("download_source")
+        val PLY_OPTIMIZE = booleanPreferencesKey("ply_optimize")
+        val PLY_MERGE_K = intPreferencesKey("ply_merge_k")
+        val PLY_MERGE_RATIO = doublePreferencesKey("ply_merge_ratio")
+        val PLY_PRUNE_THRESHOLD = doublePreferencesKey("ply_prune_threshold")
+        val PLY_SOR_NEIGHBORS = intPreferencesKey("ply_sor_neighbors")
+        val PLY_SOR_STD_RATIO = doublePreferencesKey("ply_sor_std_ratio")
+        val PLY_MERGE_CAP = doublePreferencesKey("ply_merge_cap")
+        val IMAGE_DIRECTORIES = stringPreferencesKey("image_directories")
     }
 
     /** HTP 调度类型 */
     /** HTP scheduling type */
     object PerfType {
-        const val LOCKED = 0    // 锁角模式 (默认): 电压角固定, 频率恒定
-                                // Locked-corner mode (default): fixed voltage corner, constant frequency
-        const val RANGE = 1     // 自动调角模式: DCVS 在最小~最大角区间内动态调节
-                                // Range mode: DCVS adjusts dynamically within the min~max corner range
+        const val LOCKED = 0    // Locked mode (default): fixed voltage corner, constant frequency
+        const val RANGE = 1     // Auto-adjust mode: DCVS dynamically adjusts between min and max corners
     }
 
     /**
@@ -73,7 +78,7 @@ class SettingsRepository(private val context: Context) {
      * 0x20~0xA0; DISABLE 0x10 and UNKNOWN excluded). Listed from lowest to highest voltage.
      */
     object VoltageCorner {
-        const val MIN = 0x20    // MIN (SVS2, 平台最低) / MIN (SVS2, lowest platform corner)
+        const val MIN = 0x20    // MIN (SVS2, lowest platform corner)
         const val SVS2 = 0x30
         const val SVS = 0x40
         const val SVS_PLUS = 0x50
@@ -85,9 +90,8 @@ class SettingsRepository(private val context: Context) {
         const val TURBO_L3 = 0x93
         const val TURBO_L4 = 0x94
         const val TURBO_L5 = 0x95
-        const val MAX = 0xA0    // MAX (平台最高) / MAX (highest platform corner)
+        const val MAX = 0xA0    // MAX (highest platform corner)
 
-        /** 全部可选角, 从低到高 (与下拉列表共用) */
         /** All selectable corners, low to high (shared with dropdowns) */
         val ALL: List<Int> = listOf(
             MIN, SVS2, SVS, SVS_PLUS, NOM, NOM_PLUS,
@@ -95,7 +99,7 @@ class SettingsRepository(private val context: Context) {
         )
 
         fun name(corner: Int): String = when (corner) {
-            MIN -> "MIN (最低)"
+            MIN -> "MIN (lowest)"
             SVS2 -> "SVS2"
             SVS -> "SVS"
             SVS_PLUS -> "SVS_PLUS"
@@ -107,8 +111,25 @@ class SettingsRepository(private val context: Context) {
             TURBO_L3 -> "TURBO_L3"
             TURBO_L4 -> "TURBO_L4"
             TURBO_L5 -> "TURBO_L5"
-            MAX -> "MAX (最高)"
+            MAX -> "MAX (highest)"
             else -> "0x%02X".format(corner)
+        }
+
+        fun nameResId(corner: Int): Int = when (corner) {
+            MIN -> R.string.corner_min
+            SVS2 -> R.string.corner_svs2
+            SVS -> R.string.corner_svs
+            SVS_PLUS -> R.string.corner_svs_plus
+            NOM -> R.string.corner_nom
+            NOM_PLUS -> R.string.corner_nom_plus
+            TURBO -> R.string.corner_turbo
+            TURBO_PLUS -> R.string.corner_turbo_plus
+            TURBO_L2 -> R.string.corner_turbo_l2
+            TURBO_L3 -> R.string.corner_turbo_l3
+            TURBO_L4 -> R.string.corner_turbo_l4
+            TURBO_L5 -> R.string.corner_turbo_l5
+            MAX -> R.string.corner_max
+            else -> 0
         }
     }
 
@@ -119,14 +140,13 @@ class SettingsRepository(private val context: Context) {
      * 0x1~0x20; official semantics in HAP_DCVS_V2).
      */
     object DcvsMode {
-        const val ADJUST_UP_DOWN = 0x1             // 允许上下双向调节 (默认) / allow both up and down (default)
-        const val ADJUST_ONLY_UP = 0x2             // 只升不降, 避免抖动 / up only, avoids oscillation
-        const val POWER_SAVER = 0x4                // 省电: 爬升阈值高, 倾向低频 / power saver: high ramp threshold, low-frequency bias
-        const val POWER_SAVER_AGGRESSIVE = 0x8     // 激进省电: 降频更快 / aggressive power saver: faster frequency reduction
-        const val PERFORMANCE = 0x10               // 性能: 爬升阈值低, 尽量保持高频 / performance: low ramp threshold, stays high-frequency
-        const val DUTY_CYCLE = 0x20                // 占空比: 检测 HVX 活动周期调频 (流式负载) / duty cycle: scales with HVX activity (streaming workloads)
+        const val ADJUST_UP_DOWN = 0x1             // allow both up and down (default)
+        const val ADJUST_ONLY_UP = 0x2             // up only, avoids oscillation
+        const val POWER_SAVER = 0x4                // power saver: high ramp threshold, low-frequency bias
+        const val POWER_SAVER_AGGRESSIVE = 0x8     // aggressive power saver: faster frequency reduction
+        const val PERFORMANCE = 0x10               // performance: low ramp threshold, stays high-frequency
+        const val DUTY_CYCLE = 0x20                // duty cycle: scales with HVX activity (streaming workloads)
 
-        /** 全部可选 DCVS 模式 */
         /** All selectable DCVS modes */
         val ALL: List<Int> = listOf(
             ADJUST_UP_DOWN, ADJUST_ONLY_UP, POWER_SAVER,
@@ -134,17 +154,16 @@ class SettingsRepository(private val context: Context) {
         )
 
         fun name(mode: Int): String = when (mode) {
-            ADJUST_UP_DOWN -> "ADJUST_UP_DOWN (上下双向)"
-            ADJUST_ONLY_UP -> "ADJUST_ONLY_UP (只升不降)"
-            POWER_SAVER -> "POWER_SAVER (省电)"
-            POWER_SAVER_AGGRESSIVE -> "POWER_SAVER_AGGRESSIVE (激进省电)"
-            PERFORMANCE -> "PERFORMANCE_MODE (性能优先)"
-            DUTY_CYCLE -> "DUTY_CYCLE (占空比/流式)"
+            ADJUST_UP_DOWN -> "ADJUST_UP_DOWN (adjust both)"
+            ADJUST_ONLY_UP -> "ADJUST_ONLY_UP (up only)"
+            POWER_SAVER -> "POWER_SAVER (power saver)"
+            POWER_SAVER_AGGRESSIVE -> "POWER_SAVER_AGGRESSIVE (aggressive saver)"
+            PERFORMANCE -> "PERFORMANCE_MODE (performance)"
+            DUTY_CYCLE -> "DUTY_CYCLE (duty cycle/streaming)"
             else -> "0x%02X".format(mode)
         }
     }
 
-    /** 默认性能配置: 锁角模式 + 最高角 (用户指定默认) */
     /** Default performance config: locked mode + highest corner (user-specified default) */
     object PerfDefaults {
         const val TYPE = PerfType.LOCKED
@@ -155,7 +174,6 @@ class SettingsRepository(private val context: Context) {
         const val DCVS_MODE = DcvsMode.ADJUST_UP_DOWN
     }
 
-    /** 界面语言: 跟随系统 / 中文 / English */
     /** UI language: follow system / Chinese / English */
     enum class Language(@StringRes val labelRes: Int, val key: String) {
         SYSTEM(R.string.settings_language_system, "system"),
@@ -171,12 +189,12 @@ class SettingsRepository(private val context: Context) {
     /**
      * 模型下载源: HuggingFace 官方 (HG) 或国内镜像站 (HM)。
      * Model download source: HuggingFace official (HG) or HF Mirror (HM) for Chinese users.
-     * 镜像站地址: https://hf-mirror.com
+     * /hf-mirror.com
      * Mirror URL: https://hf-mirror.com
      */
     enum class DownloadSource(val key: String) {
-        HG("hg"),   // HuggingFace 官方 (默认) / HuggingFace official (default)
-        HM("hm");   // HF 镜像站 (国内用户推荐) / HF Mirror (recommended for Chinese users)
+        HG("hg"),   // HuggingFace official (default)
+        HM("hm");   // HF Mirror (recommended for Chinese users)
 
         companion object {
             fun fromKey(key: String?): DownloadSource =
@@ -185,7 +203,6 @@ class SettingsRepository(private val context: Context) {
     }
 
     /**
-     * 设置快照。
      * Settings snapshot.
      */
     data class Settings(
@@ -200,7 +217,15 @@ class SettingsRepository(private val context: Context) {
         val perfDcvsMode: Int,
         val dynamicColor: Boolean,
         val language: Language = Language.SYSTEM,
-        val downloadSource: DownloadSource = DownloadSource.HG
+        val downloadSource: DownloadSource = DownloadSource.HG,
+        val plyOptimize: Boolean = true,
+        val plyMergeK: Int = 16,
+        val plyMergeRatio: Double = 0.5,
+        val plyPruneThreshold: Double = 0.1,
+        val plySorNeighbors: Int = 10,
+        val plySorStdRatio: Double = 2.0,
+        val plyMergeCap: Double = 0.5,
+        val imageDirectories: Set<String> = emptySet()
     )
 
     val settingsFlow: Flow<Settings> = context.settingsDataStore.data.map { prefs ->
@@ -216,7 +241,15 @@ class SettingsRepository(private val context: Context) {
             perfDcvsMode = prefs[Keys.PERF_DCVS_MODE] ?: PerfDefaults.DCVS_MODE,
             dynamicColor = prefs[Keys.DYNAMIC_COLOR] ?: DEFAULTS.dynamicColor,
             language = Language.fromKey(prefs[Keys.LANGUAGE]),
-            downloadSource = DownloadSource.fromKey(prefs[Keys.DOWNLOAD_SOURCE])
+            downloadSource = DownloadSource.fromKey(prefs[Keys.DOWNLOAD_SOURCE]),
+            plyOptimize = prefs[Keys.PLY_OPTIMIZE] ?: DEFAULTS.plyOptimize,
+            plyMergeK = prefs[Keys.PLY_MERGE_K] ?: DEFAULTS.plyMergeK,
+            plyMergeRatio = prefs[Keys.PLY_MERGE_RATIO] ?: DEFAULTS.plyMergeRatio,
+            plyPruneThreshold = prefs[Keys.PLY_PRUNE_THRESHOLD] ?: DEFAULTS.plyPruneThreshold,
+            plySorNeighbors = prefs[Keys.PLY_SOR_NEIGHBORS] ?: DEFAULTS.plySorNeighbors,
+            plySorStdRatio = prefs[Keys.PLY_SOR_STD_RATIO] ?: DEFAULTS.plySorStdRatio,
+            plyMergeCap = prefs[Keys.PLY_MERGE_CAP] ?: DEFAULTS.plyMergeCap,
+            imageDirectories = prefs[Keys.IMAGE_DIRECTORIES]?.split(",")?.filter { it.isNotBlank() }?.toSet() ?: emptySet()
         )
     }
 
@@ -236,20 +269,17 @@ class SettingsRepository(private val context: Context) {
         context.settingsDataStore.edit { it[Keys.DYNAMIC_COLOR] = enable }
     }
 
-    /** 设置界面语言 (SYSTEM 表示跟随系统) */
     /** Set the UI language (SYSTEM follows the device) */
     suspend fun setLanguage(language: Language) {
         context.settingsDataStore.edit { it[Keys.LANGUAGE] = language.key }
-        // 同步写 SharedPreferences, 供 attachBaseContext 冷启动读取
         // Also write to SharedPreferences for cold-start attachBaseContext
         context.getSharedPreferences(SHARPApplication.LANG_PREFS, Context.MODE_PRIVATE)
             .edit().putString(SHARPApplication.KEY_LANGUAGE, language.key).apply()
     }
 
     /**
-     * 设置模型下载源。
      * Set the model download source.
-     * @param source 下载源 (HG=官方, HM=国内镜像) / download source (HG=official, HM=mirror)
+     * download source (HG=official, HM=mirror)
      */
     suspend fun setDownloadSource(source: DownloadSource) {
         context.settingsDataStore.edit { it[Keys.DOWNLOAD_SOURCE] = source.key }
@@ -279,8 +309,39 @@ class SettingsRepository(private val context: Context) {
         context.settingsDataStore.edit { it[Keys.PERF_DCVS_MODE] = mode }
     }
 
+    suspend fun setPlyOptimize(enable: Boolean) {
+        context.settingsDataStore.edit { it[Keys.PLY_OPTIMIZE] = enable }
+    }
+
+    suspend fun setPlyMergeK(k: Int) {
+        context.settingsDataStore.edit { it[Keys.PLY_MERGE_K] = k }
+    }
+
+    suspend fun setPlyMergeRatio(ratio: Double) {
+        context.settingsDataStore.edit { it[Keys.PLY_MERGE_RATIO] = ratio }
+    }
+
+    suspend fun setPlyPruneThreshold(threshold: Double) {
+        context.settingsDataStore.edit { it[Keys.PLY_PRUNE_THRESHOLD] = threshold }
+    }
+
+    suspend fun setPlySorNeighbors(n: Int) {
+        context.settingsDataStore.edit { it[Keys.PLY_SOR_NEIGHBORS] = n }
+    }
+
+    suspend fun setPlySorStdRatio(ratio: Double) {
+        context.settingsDataStore.edit { it[Keys.PLY_SOR_STD_RATIO] = ratio }
+    }
+
+    suspend fun setPlyMergeCap(cap: Double) {
+        context.settingsDataStore.edit { it[Keys.PLY_MERGE_CAP] = cap }
+    }
+
+    suspend fun setImageDirectories(dirs: Set<String>) {
+        context.settingsDataStore.edit { it[Keys.IMAGE_DIRECTORIES] = dirs.joinToString(",") }
+    }
+
     companion object {
-        /** 默认设置快照 (页面 collectAsState 的 initial 值统一取此) */
         /** Default settings snapshot (used as the initial value for collectAsState) */
         val DEFAULTS = Settings(
             plySaveLocation = "",
@@ -294,13 +355,24 @@ class SettingsRepository(private val context: Context) {
             perfDcvsMode = PerfDefaults.DCVS_MODE,
             dynamicColor = true,
             language = Language.SYSTEM,
-            downloadSource = DownloadSource.HG
+            downloadSource = DownloadSource.HG,
+            plyOptimize = true,
+            plyMergeK = 16,
+            plyMergeRatio = 0.5,
+            plyPruneThreshold = 0.1,
+            plySorNeighbors = 10,
+            plySorStdRatio = 2.0,
+            plyMergeCap = 0.5,
+            imageDirectories = emptySet()
         )
 
-        /** 将 SAF tree Uri 转为人眼可读路径 (如 /storage/emulated/0/Download/sharp_ply) */
         /** Convert a SAF tree Uri to a human-readable path (e.g. /storage/emulated/0/Download/sharp_ply) */
         fun plySaveDisplayPath(uriString: String): String {
             if (uriString.isBlank()) return ""
+            // Plain file path: return as-is
+            if (!uriString.startsWith("content://")) {
+                return uriString
+            }
             return try {
                 val uri = Uri.parse(uriString)
                 val docId = DocumentsContract.getTreeDocumentId(uri)
@@ -312,8 +384,6 @@ class SettingsRepository(private val context: Context) {
             }
         }
 
-        /** 通用显示: content:// 转可读路径, 其余 (本地路径) 原样返回 */
-        /** Generic display: content:// becomes a readable path; others (local paths) pass through */
         fun displayPath(value: String): String =
             if (value.startsWith("content://")) plySaveDisplayPath(value) else value
     }

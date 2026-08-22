@@ -19,6 +19,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -29,7 +30,6 @@ import java.io.IOException
  * Pipeline 编排器。
  * Pipeline orchestrator.
  *
- * 串联完整推理流程:
  * Chains the full inference flow:
  * prepImage → runPre → PE → IE → Merge → REST(A/B/C) → Post(PLY)
  *
@@ -50,7 +50,6 @@ class PipelineManager(
 
     private val runMutex = Mutex()
 
-    // 运行时状态
     // Runtime state
     @Volatile
     private var initialized = false
@@ -60,16 +59,13 @@ class PipelineManager(
     private var stageStartTime = 0L
     private var compileStageStartTime = 0L
 
-    // 本次运行的本地化 Context (按用户语言包装; 语言切换在一次运行内保持一致)
     // Locale-wrapped context for this run (consistent for the whole run,
     // even if the language setting changes mid-run)
     private var langCtx: Context = context
 
-    // prepImage 输出 (供后续 Post 阶段使用)
     // prepImage output (used by the later Post stage)
     private var prepMeta: FloatArray? = null
 
-    /** 本次运行语言的本地化模型名 */
     /** Localized model name for the current run's language */
     private fun modelName(type: ModelType): String = LocaleUtil.modelName(langCtx, type)
 
@@ -84,11 +80,10 @@ class PipelineManager(
     suspend fun runPipeline(imageUri: Uri): Result<Unit> = runMutex.withLock {
         withContext(Dispatchers.IO) {
             try {
-                // 锁定本次运行的语言 (消息细节按此语言本地化)
                 // Pin the language for this run (detail messages use it)
-                langCtx = LocaleUtil.wrap(context, settings.settingsFlow.first().language)
+                val plySettings = settings.settingsFlow.first()
+                langCtx = LocaleUtil.wrap(context, plySettings.language)
 
-                // 重置状态 (loadedModels 保留, 已加载模型无需重新加载)
                 // Reset state (loadedModels is kept; already-loaded models are reused)
                 pipelineStartTime = System.currentTimeMillis()
                 val hasUncompiled = ModelType.entries.any { type ->
@@ -96,29 +91,49 @@ class PipelineManager(
                         it.format == ModelFormat.DLC && it.status != ModelStatus.COMPILED
                     } == true
                 }
-                val stages = if (hasUncompiled) {
-                    listOf(StageState(id = COMPILE_STAGE_ID, name = "Model Compilation", nameRes = R.string.stage_compile)) + DEFAULT_STAGES
-                } else {
-                    DEFAULT_STAGES
-                }
+                val stages = {
+                    val base = if (hasUncompiled) {
+                        val initIdx = DEFAULT_STAGES.indexOfFirst { it.id == PREPARE_STAGE_ID }
+                        DEFAULT_STAGES.toMutableList().apply {
+                            add(initIdx + 1, StageState(id = COMPILE_STAGE_ID, name = "Model Compilation", nameRes = R.string.stage_compile))
+                        }
+                    } else {
+                        DEFAULT_STAGES.toMutableList()
+                    }
+                    // Decide PLY optimization inclusion based on settings, and set stage name dynamically
+                    if (plySettings.plyOptimize) {
+                        val parts = mutableListOf<String>()
+                        if (plySettings.plyPruneThreshold > 0.0) parts.add("Prune")
+                        if (plySettings.plySorNeighbors > 0) parts.add("SOR")
+                        if (plySettings.plyMergeRatio in 0.001..0.999) parts.add("kNN")
+                        base[base.indexOfFirst { it.id == PLY_OPTIMIZE_STAGE_ID }] =
+                            StageState(id = PLY_OPTIMIZE_STAGE_ID, name = "PLY Optimize", nameRes = R.string.stage_ply_optimize, total = parts.size.coerceAtLeast(1))
+                    } else {
+                        base.removeAll { it.id == PLY_OPTIMIZE_STAGE_ID }
+                    }
+                    base
+                }()
                 _state.value = PipelineState(stages = stages, isRunning = true)
 
-                // 注册回调
+                // Start the init stage immediately so the user sees progress
+                onStageStart(PREPARE_STAGE_ID, "Initialization")
+                onProgress(PREPARE_STAGE_ID, 0, ModelType.entries.size, 0, MsgKey.DETAIL_INIT_QNN)
+
                 // Register the callback
                 runCatching { QnnJni.setProgressCallback(this@PipelineManager) }
 
-                // 1. 初始化 QNN 运行时 + 确保模型就绪
                 // 1. Initialize the QNN runtime and ensure models are ready
                 ensureReady()
 
-                // 2. 准备工作目录
+                // Init stage done
+                onStageComplete(PREPARE_STAGE_ID, "Initialization", System.currentTimeMillis() - pipelineStartTime)
+
                 // 2. Prepare the work directory
                 val workDir = File(context.cacheDir, "sharp_work").also {
                     if (it.exists()) FileUtil.deleteRecursively(it)
                     ensureDir(it)
                 }
 
-                // 3. 复制输入图片
                 // 3. Copy the input image
                 val fileName = FileUtil.getFileNameFromUri(context, imageUri)
                 android.util.Log.i(TAG, "=== Pipeline started, image=$fileName ===")
@@ -129,7 +144,6 @@ class PipelineManager(
                     return@withContext Result.failure(IOException("copy image failed"))
                 }
 
-                // 4. Stage 0: 解码图片 (prepImage)
                 // 4. Stage 0: decode the image (prepImage)
                 val imageRaw = File(workDir, "image.raw")
                 val meta = runStage(0) {
@@ -140,27 +154,23 @@ class PipelineManager(
                 }
                 prepMeta = meta
 
-                // 5. Stage 1: 预处理切 Patch (runPre)
                 // 5. Stage 1: pre-process and split patches (runPre)
                 if (!runStage(1) { QnnJni.runPre(imageRaw.absolutePath, workDir.absolutePath) }) {
                     fail(MsgKey.ERR_PRE_FAILED)
                     return@withContext Result.failure(IOException("runPre failed"))
                 }
 
-                // 6. Stage 2: PE 推理
                 // 6. Stage 2: PE inference
                 if (!runStage(2) { QnnJni.runPatchEncoder(workDir.absolutePath) }) {
                     fail(MsgKey.ERR_PE_INFER_FAILED)
                     return@withContext Result.failure(IOException("runPatchEncoder failed"))
                 }
-                // PE 输出已全部落盘, 模型不再需要: 立即释放 context 内存 (QnnContext_free)
                 // All PE outputs are on disk and the model is no longer needed:
                 // release its context memory immediately (QnnContext_free)
                 android.util.Log.i(TAG, "PE done, releasing PE model")
                 runCatching { QnnJni.freeModel(ModelType.PE.code) }
                 synchronized(loadedModelsLock) { loadedModels.remove(ModelType.PE) }
 
-                // 7. Stage 3: IE 推理
                 // 7. Stage 3: IE inference
                 if (!runStage(3) { QnnJni.runImageEncoder(workDir.absolutePath) }) {
                     fail(MsgKey.ERR_IE_INFER_FAILED)
@@ -172,7 +182,6 @@ class PipelineManager(
 
                 // 8. Stage 4: Merge
                 // 8. Stage 4: Merge
-                // 注意: 目录名必须与 JNI 层 (sharp_jni.cpp) 一致: out_pe / out_ie
                 // Note: directory names must match the JNI layer (sharp_jni.cpp): out_pe / out_ie
                 val peOutDir = File(workDir, "out_pe")
                 val ieOutDir = File(workDir, "out_ie")
@@ -181,7 +190,6 @@ class PipelineManager(
                     return@withContext Result.failure(IOException("runMerge failed"))
                 }
 
-                // 9. Stage 5: REST Seg A (特征融合)
                 // 9. Stage 5: REST Seg A (feature fusion)
                 if (!runStage(5) { QnnJni.runRestSegA(workDir.absolutePath) }) {
                     fail(MsgKey.ERR_REST_A_FAILED)
@@ -191,7 +199,6 @@ class PipelineManager(
                 runCatching { QnnJni.freeModel(ModelType.REST_A.code) }
                 synchronized(loadedModelsLock) { loadedModels.remove(ModelType.REST_A) }
 
-                // 10. Stage 6: REST Seg B (视差估计)
                 // 10. Stage 6: REST Seg B (disparity estimation)
                 if (!runStage(6) { QnnJni.runRestSegB(workDir.absolutePath) }) {
                     fail(MsgKey.ERR_REST_B_FAILED)
@@ -201,8 +208,7 @@ class PipelineManager(
                 runCatching { QnnJni.freeModel(ModelType.REST_B.code) }
                 synchronized(loadedModelsLock) { loadedModels.remove(ModelType.REST_B) }
 
-                // 11. Stage 7: REST Seg C (高斯增量)
-                // 11. Stage 7: REST Seg C (gaussian delta)
+                // 11. Stage 7: REST Seg C (Gaussian increment)
                 val fpx = prepMeta?.getOrNull(0) ?: 0f
                 val origW = (prepMeta?.getOrNull(2) ?: 0f).toInt()
                 val origH = (prepMeta?.getOrNull(3) ?: 0f).toInt()
@@ -210,13 +216,11 @@ class PipelineManager(
                     fail(MsgKey.ERR_REST_C_FAILED)
                     return@withContext Result.failure(IOException("runRestSegC failed"))
                 }
-                // REST C 输出已落盘 (delta.raw), 模型不再需要
                 // REST C output is on disk (delta.raw); the model is no longer needed
                 android.util.Log.i(TAG, "REST C done, releasing REST_C model")
                 runCatching { QnnJni.freeModel(ModelType.REST_C.code) }
                 synchronized(loadedModelsLock) { loadedModels.remove(ModelType.REST_C) }
 
-                // 12. Stage 8: Post (PLY 生成)
                 // 12. Stage 8: Post (PLY generation)
                 val plyPath = File(workDir, "output.ply").absolutePath
                 if (!runStage(8) { QnnJni.runPost(workDir.absolutePath, fpx, origW, origH, plyPath) }) {
@@ -224,7 +228,27 @@ class PipelineManager(
                     return@withContext Result.failure(IOException("runPost failed"))
                 }
 
-                // 完成
+                // SOR / kNN Merge)
+                if (plySettings.plyOptimize) {
+                    android.util.Log.i(TAG, "PLY optimization enabled, running GaussSimplify...")
+                    if (!runStage(9) {
+                        QnnJni.nativeOptimizePly(
+                            plyPath = plyPath,
+                            mergeK = plySettings.plyMergeK,
+                            mergeRatio = plySettings.plyMergeRatio,
+                            mergeCap = plySettings.plyMergeCap,
+                            pruneThreshold = plySettings.plyPruneThreshold,
+                            sorNeighbors = plySettings.plySorNeighbors,
+                            sorStdRatio = plySettings.plySorStdRatio
+                        )
+                    }) {
+                        android.util.Log.w(TAG, "PLY optimization failed, but PLY is still usable")
+                        // Optimization failure is non-fatal; the PLY is still usable
+                    }
+                } else {
+                    android.util.Log.i(TAG, "PLY optimization disabled, skipping")
+                }
+
                 // Done
                 val totalElapsed = System.currentTimeMillis() - pipelineStartTime
                 android.util.Log.i(TAG, "=== Pipeline done, total ${totalElapsed}ms, PLY=$plyPath ===")
@@ -241,11 +265,9 @@ class PipelineManager(
         }
     }
 
-    /** 取消并重置当前 Pipeline 状态 */
     /** Cancel and reset the current pipeline state */
     fun reset() {
         _state.value = PipelineState()
-        // 释放已加载模型的 HTP 内存
         // Release the HTP memory of loaded models
         synchronized(loadedModelsLock) {
             for (modelType in loadedModels) {
@@ -256,7 +278,6 @@ class PipelineManager(
         runCatching { QnnJni.clearRestCache() }
     }
 
-    /** 获取最近一次推理的 PLY 文件路径 (供导出使用) */
     /** Path of the PLY file from the latest run (for export) */
     fun getLastPlyFile(): File? {
         val workDir = File(context.cacheDir, "sharp_work")
@@ -264,26 +285,24 @@ class PipelineManager(
         return if (ply.exists()) ply else null
     }
 
-    // ====== 内部: 初始化与模型就绪 ======
+    // ======  ======
     // ====== Internals: initialization and model readiness ======
 
-    /** 确保 QNN 运行时已初始化 (幂等)。模型页单独编译前也需调用。 */
     /** Ensure the QNN runtime is initialized (idempotent). Also required before
      * standalone compilation from the models tab. */
     suspend fun ensureQnnInitialized() {
         if (initialized) return
-        // 锁定本次语言 (编译进度细节按此本地化)
+        // Notify the init stage (only effective in pipeline context; harmless otherwise)
+        onProgress(PREPARE_STAGE_ID, 0, ModelType.entries.size, 0, MsgKey.DETAIL_INIT_QNN)
         // Pin the language for this call (compile progress details use it)
         langCtx = LocaleUtil.wrap(context, settings.settingsFlow.first().language)
         val libDir = context.applicationInfo.nativeLibraryDir
-        // 按探测结果选择 Skel: skel 必须与设备架构精确匹配, 探测失败即报错
         // Pick the Skel from the probe result: the skel must match the device
         // architecture exactly, so a failed probe is a hard error
         val arch = QnnJni.probeHtpArch(libDir)
         if (arch.isBlank()) {
             throw IOException(MsgKey.ERR_QNN_INIT)
         }
-        // HTP 性能配置必须在 nativeInit 前下发 (创建共享 backend/device 时生效)
         // The HTP perf config must be sent before nativeInit (it applies when
         // the shared backend/device is created)
         val s = settings.settingsFlow.first()
@@ -305,7 +324,6 @@ class PipelineManager(
     private suspend fun ensureReady() {
         ensureQnnInitialized()
 
-        // 待编译模型列表 (DLC 且未编译)
         // Models to compile (DLC and not yet compiled)
         val toCompile = ModelType.entries.filter { type ->
             val e = modelStore.getModel(type)
@@ -313,15 +331,25 @@ class PipelineManager(
         }
         val total = toCompile.size
 
-        // 确保 PE / IE 均已编译并加载
         // Ensure every model is compiled and loaded
         if (total > 0) {
             compileStageStartTime = System.currentTimeMillis()
             onStageStart(COMPILE_STAGE_ID, "Model Compilation")
         }
+        var loadedCount = 0
         for (type in ModelType.entries) {
-            val compileIndex = toCompile.indexOf(type) // -1 = 无需编译 / -1 = nothing to compile
+            val compileIndex = toCompile.indexOf(type) // -1 = nothing to compile
+            val alreadyLoaded = synchronized(loadedModelsLock) { loadedModels.contains(type) }
             ensureModelReady(type, compileIndex, total)
+            if (!alreadyLoaded) {
+                loadedCount++
+                onProgress(
+                    PREPARE_STAGE_ID,
+                    loadedCount, ModelType.entries.size,
+                    System.currentTimeMillis() - pipelineStartTime,
+                    MsgKey.k(MsgKey.DETAIL_LOADING_MODEL, modelName(type))
+                )
+            }
         }
         if (total > 0) {
             onStageComplete(COMPILE_STAGE_ID, "Model Compilation", System.currentTimeMillis() - compileStageStartTime)
@@ -334,10 +362,8 @@ class PipelineManager(
         val entry: ModelEntry = modelStore.getModel(type)
             ?: throw IllegalStateException(MsgKey.k(MsgKey.ERR_MODEL_NOT_IMPORTED, modelName(type)))
 
-        // DLC 未编译则先编译
         // Compile first if the DLC is not compiled yet
         if (entry.status != ModelStatus.COMPILED) {
-            // 编译开始: 进度显示已完成 x/总 (当前模型尚未计入)
             // Compilation start: progress shows x/total done (current model not counted yet)
             onProgress(
                 COMPILE_STAGE_ID,
@@ -351,7 +377,6 @@ class PipelineManager(
                     MsgKey.k(MsgKey.ERR_MODEL_COMPILE_FAILED, modelName(type), compileResult.exceptionOrNull()?.message ?: "")
                 )
             }
-            // 编译完成: 更新完成数与时耗
             // Compilation done: update the count and elapsed time
             onProgress(
                 COMPILE_STAGE_ID,
@@ -361,7 +386,6 @@ class PipelineManager(
             )
         }
 
-        // 重新读取 (编译后 entry 可能已更新)
         // Re-read the entry (it may have been updated by compilation)
         val ready = modelStore.getModel(type) ?: throw IllegalStateException(MsgKey.k(MsgKey.ERR_MODEL_MISSING, modelName(type)))
         val binPath = ready.runtimeBinPath
@@ -373,10 +397,9 @@ class PipelineManager(
         synchronized(loadedModelsLock) { loadedModels.add(type) }
     }
 
-    // ====== 内部: 阶段执行 ======
+    // ======  ======
     // ====== Internals: stage execution ======
 
-    /** 执行单个阶段，自动发出 start / complete 回调 */
     /** Run a single stage, emitting start / complete callbacks automatically */
     private fun <T> runStage(stageId: Int, block: () -> T): T {
         val stage = _state.value.stages.first { it.id == stageId }
@@ -387,14 +410,12 @@ class PipelineManager(
             val result = block()
             val elapsed = System.currentTimeMillis() - stageStartTime
             android.util.Log.i(TAG, "Stage ${stage.id} done: ${stage.name} (${elapsed}ms)")
-            // 仅当 pipeline 仍在运行时才标记阶段完成
             // Only mark the stage complete while the pipeline is still running
             if (_state.value.isRunning) {
                 onStageComplete(stageId, stage.name, elapsed)
             }
             return result
         } catch (e: Exception) {
-            // 异常时标记阶段失败
             // Mark the stage as failed on exception
             if (_state.value.isRunning) {
                 fail(MsgKey.k(MsgKey.ERR_STAGE_EXCEPTION, stageId, e.message ?: e.toString()))
@@ -405,7 +426,6 @@ class PipelineManager(
 
     private fun fail(message: String) {
         android.util.Log.e(TAG, "Pipeline failed: $message")
-        // 释放已加载模型的 HTP 内存 (推理失败后清理, 避免泄漏)
         // Release HTP memory of loaded models after failure to avoid leaks
         synchronized(loadedModelsLock) {
             for (modelType in loadedModels) {
@@ -414,7 +434,6 @@ class PipelineManager(
             loadedModels.clear()
         }
         runCatching { QnnJni.clearRestCache() }
-        // 复位所有运行中的 stage (取消/异常后保持状态一致)
         // Reset every running stage so the state stays consistent after
         // cancellation or an exception
         val current = _state.value
@@ -428,7 +447,7 @@ class PipelineManager(
         )
     }
 
-    // ====== ProgressCallback 实现 ======
+    // ====== ProgressCallback Implementation ======
     // ====== ProgressCallback implementation ======
 
     override fun onStageStart(stageId: Int, stageName: String) {
@@ -437,9 +456,10 @@ class PipelineManager(
 
     override fun onProgress(stageId: Int, current: Int, total: Int, elapsedMs: Long, detail: String) {
         updateStage(stageId) {
+            val effTotal = if (total > 0) total else it.total
             it.copy(
-                current = current,
-                total = if (total > 0) total else it.total,
+                current = current.coerceAtMost(effTotal),
+                total = effTotal,
                 elapsedMs = if (elapsedMs > 0) elapsedMs else it.elapsedMs,
                 detail = detail
             )
@@ -461,7 +481,6 @@ class PipelineManager(
     }
 
     override fun onLog(level: Int, message: String) {
-        // 日志可在此转发到 Logcat 或 UI 日志面板 (预留)
         // Log lines may be forwarded to Logcat or a UI log panel here (reserved)
         android.util.Log.println(logPriority(level), TAG, message)
     }
@@ -470,13 +489,17 @@ class PipelineManager(
         fail(MsgKey.k(MsgKey.ERR_STAGE_ERROR, stageId, message))
     }
 
-    // ====== 内部: 状态更新 ======
+    // ======  ======
     // ====== Internals: state updates ======
 
     private fun updateStage(stageId: Int, transform: (StageState) -> StageState) {
-        val current = _state.value
-        val newStages = current.stages.map { if (it.id == stageId) transform(it) else it }
-        _state.value = current.copy(stages = newStages)
+        _state.update { current ->
+            val idx = current.stages.indexOfFirst { it.id == stageId }
+            if (idx < 0) return@update current
+            val newStages = current.stages.toMutableList()
+            newStages[idx] = transform(newStages[idx])
+            current.copy(stages = newStages)
+        }
     }
 
     private fun logPriority(level: Int): Int = when (level) {
@@ -490,8 +513,13 @@ class PipelineManager(
     companion object {
         private const val TAG = "PipelineManager"
 
-        // 模型编译阶段 (动态插入 stages 头部, 不与 0-8 冲突)
+        // Init stage (QNN runtime + model loading, runs first)
+        const val PREPARE_STAGE_ID = -2
+
         // Model compilation stage (inserted at the head of stages; does not collide with 0-8)
         const val COMPILE_STAGE_ID = -1
+
+        // Removed)
+        const val PLY_OPTIMIZE_STAGE_ID = 9
     }
 }

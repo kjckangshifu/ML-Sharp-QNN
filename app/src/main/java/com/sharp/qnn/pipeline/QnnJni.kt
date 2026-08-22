@@ -16,8 +16,7 @@ package com.sharp.qnn.pipeline
  */
 object QnnJni {
 
-    // ====== 生命周期 ======
-    // ====== Lifecycle ======
+        // ====== Lifecycle ======
 
     /**
      * 探测设备实际的 HTP 架构 (QnnDevice_getPlatformInfo)。
@@ -43,7 +42,6 @@ object QnnJni {
      */
     external fun nativeInit(libDir: String, skelDir: String, arch: String): Boolean
 
-    /** 销毁 QNN 运行时，释放全部资源 */
     /** Destroy the QNN runtime and release all resources */
     external fun nativeDestroy()
 
@@ -51,7 +49,7 @@ object QnnJni {
      * 设置 HTP 性能配置。
      * Set the HTP performance configuration.
      *
-     * @param type          0=锁角模式 (使用 [lockedCorner]), 1=自动调角模式 (使用 min/target/max + dcvsMode)
+     * target/max + dcvsMode)
      * @param type          0=locked-corner mode (uses [lockedCorner]), 1=range mode (uses min/target/max + dcvsMode)
      * @param lockedCorner  锁角模式的电压角 (0x20 MIN ~ 0xA0 MAX, 见 SettingsRepository.VoltageCorner)
      * @param lockedCorner  voltage corner for locked mode (0x20 MIN ~ 0xA0 MAX, see SettingsRepository.VoltageCorner)
@@ -72,13 +70,12 @@ object QnnJni {
         targetCorner: Int, maxCorner: Int, dcvsMode: Int
     )
 
-    // ====== 模型管理 ======
-    // ====== Model management ======
+        // ====== Model management ======
 
     /**
      * 加载预编译 .bin 上下文。
      * Load a precompiled .bin context.
-     * @param modelType 模型槽位: "pe" / "ie" / "rest_a" / "rest_b" / "rest_c" (见 ModelType.code)
+     * "ie" / "rest_a" / "rest_b" / "rest_c" (见 ModelType.code)
      * @param modelType model slot: "pe" / "ie" / "rest_a" / "rest_b" / "rest_c" (see ModelType.code)
      * @param binPath   .bin 文件路径
      * @param binPath   path of the .bin file
@@ -88,7 +85,7 @@ object QnnJni {
     /**
      * 编译 DLC → .bin。
      * Compile a DLC into a .bin.
-     * @param modelType  模型槽位: "pe" / "ie" / "rest_a" / "rest_b" / "rest_c" (见 ModelType.code)
+     * "ie" / "rest_a" / "rest_b" / "rest_c" (见 ModelType.code)
      * @param modelType  model slot: "pe" / "ie" / "rest_a" / "rest_b" / "rest_c" (see ModelType.code)
      * @param dlcPath    输入 .dlc 路径
      * @param dlcPath    input .dlc path
@@ -107,12 +104,10 @@ object QnnJni {
      */
     external fun cancelCompile()
 
-    /** 释放指定模型的上下文 */
     /** Release the context of a model */
     external fun freeContext(modelType: String)
 
     /**
-     * 验证模型文件完整性: 检查文件存在性、大小合理性、基础格式头。
      * Validate model file integrity: checks existence, reasonable size, and basic format header.
      * @param path   模型文件路径
      * @param path   model file path
@@ -123,15 +118,13 @@ object QnnJni {
      */
     external fun validateModelFile(path: String, format: String): String?
 
-    /** 释放指定模型的上下文 (推理完成后卸载, 释放 HTP 内存) */
     /** Unload a model's context after inference to free HTP memory */
     external fun freeModel(modelType: String)
 
-    /** 清理 REST 段间内存缓存 */
     /** Clear the REST inter-stage memory cache */
     external fun clearRestCache()
 
-    // ====== 推理 Pipeline ======
+    // ======  ======
     // ====== Inference pipeline ======
 
     /**
@@ -154,7 +147,7 @@ object QnnJni {
     /** IE inference (image encoder, once) */
     external fun runImageEncoder(workDir: String): Boolean
 
-    /** merge 阶段: 合并 PE / IE 输出 (6 个尺度) */
+    /** IE 输出 (6 个尺度) */
     /** Merge stage: combine PE / IE outputs (6 scales) */
     external fun runMerge(workDir: String, peOutDir: String, ieOutDir: String): Boolean
 
@@ -180,10 +173,36 @@ object QnnJni {
         outPlyPath: String
     ): Boolean
 
-    // ====== 回调 ======
-    // ====== Callbacks ======
+    /**
+     * kNN 合并。
+     * Optimize a PLY file: opacity pruning / SOR outlier removal / kNN merge via GaussSimplify.
+     * @param plyPath        PLY 文件路径 (原地修改)
+     * @param plyPath        PLY file path (modified in-place)
+     * @param mergeK         kNN 近邻数 (默认 16)
+     * @param mergeK         kNN neighbors (default 16)
+     * @param mergeRatio     目标比例 0.0~1.0 (默认 0.5)
+     * @param mergeRatio     target ratio 0.0~1.0 (default 0.5)
+     * @param pruneThreshold 透明度剪枝阈值 (默认 0.1)
+     * @param pruneThreshold opacity prune threshold (default 0.1)
+     * @param sorNeighbors   SOR 近邻数, 0=关闭 (默认 10)
+     * @param sorNeighbors   SOR neighbors, 0=disabled (default 10)
+     * SOR std multiplier (default 2.0)
+     * merge cap per pass (default 0.5)
+     * @return true 表示优化成功
+     * @return true on success
+     */
+    external fun nativeOptimizePly(
+        plyPath: String,
+        mergeK: Int,
+        mergeRatio: Double,
+        mergeCap: Double,
+        pruneThreshold: Double,
+        sorNeighbors: Int,
+        sorStdRatio: Double
+    ): Boolean
 
-    /** 设置进度回调 (JVM 回调对象) */
+        // ====== Callbacks ======
+
     /** Set the progress callback (a JVM callback object) */
     external fun setProgressCallback(callback: ProgressCallback)
 }
@@ -196,23 +215,18 @@ object QnnJni {
  * Invoked by the native layer during inference to update UI progress.
  */
 interface ProgressCallback {
-    /** 阶段开始 */
     /** Stage start */
     fun onStageStart(stageId: Int, stageName: String)
 
-    /** 阶段内进度更新 */
     /** In-stage progress update */
     fun onProgress(stageId: Int, current: Int, total: Int, elapsedMs: Long, detail: String)
 
-    /** 阶段完成 */
     /** Stage complete */
     fun onStageComplete(stageId: Int, stageName: String, elapsedMs: Long)
 
-    /** 日志 (level: 0=DEBUG,1=INFO,2=WARN,3=ERROR) */
     /** Log (level: 0=DEBUG, 1=INFO, 2=WARN, 3=ERROR) */
     fun onLog(level: Int, message: String)
 
-    /** 阶段错误 */
     /** Stage error */
     fun onError(stageId: Int, message: String)
 }

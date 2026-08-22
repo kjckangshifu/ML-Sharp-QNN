@@ -1,0 +1,6 @@
+[submodule "GaussSimplify"]
+	path = GaussSimplify
+	url = https://github.com/3dgscloud/GaussSimplify.git
+[submodule "GaussForge"]
+	path = GaussForge
+	url = https://github.com/3dgscloud/GaussForge.git

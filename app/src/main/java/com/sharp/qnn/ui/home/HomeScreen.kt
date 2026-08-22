@@ -2,16 +2,29 @@ package com.sharp.qnn.ui.home
 
 import android.app.Application
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.graphics.BitmapFactory
+import android.Manifest
 import android.media.ExifInterface
 import android.net.Uri
-import android.provider.DocumentsContract
+import android.os.Build
+import android.os.Environment
+import android.provider.Settings
+import java.io.File
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
 import androidx.compose.animation.togetherWith
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -35,6 +48,7 @@ import androidx.compose.material.icons.filled.Save
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -42,20 +56,24 @@ import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.produceState
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -92,7 +110,6 @@ class HomeViewModel(app: Application) : AndroidViewModel(app) {
     val models = sharpApp.modelStore.models
     val settingsFlow = sharpApp.settingsRepository.settingsFlow
 
-    // 选中的图片 Uri 与文件名 (持久于 ViewModel, 切页不丢失)
     // Selected image Uri and file name (kept in the ViewModel across page switches)
     private val _selectedImageUri = mutableStateOf<Uri?>(null)
     val selectedImageUri: State<Uri?> = _selectedImageUri
@@ -100,7 +117,6 @@ class HomeViewModel(app: Application) : AndroidViewModel(app) {
     private val _selectedImageName = mutableStateOf<String?>(null)
     val selectedImageName: State<String?> = _selectedImageName
 
-    // 图片详细信息
     // Detailed image info
     data class ImageDetails(
         val width: Int,
@@ -113,22 +129,35 @@ class HomeViewModel(app: Application) : AndroidViewModel(app) {
     private val _imageDetails = mutableStateOf<ImageDetails?>(null)
     val imageDetails: State<ImageDetails?> = _imageDetails
 
-    // 选图代数: 每次选图自增, 用于丢弃过期异步加载结果
     // Image-load generation: incremented on each selection, used to drop stale async results
     @Volatile
     private var imageLoadGeneration = 0L
 
-    /** 设置选中的图片 */
     /** Sets the selected image. */
     fun setSelectedImage(uri: Uri?) {
         _selectedImageUri.value = uri
         _selectedImageName.value = uri?.let { FileUtil.getFileNameFromUri(sharpApp, it) }
         _imageDetails.value = null
+        _exportMessage.value = null
+        _exporting.value = false
+
+        // Clear previous inference artifacts (excluding exported PLY) when re-selecting an image
+        // Clear previous inference products and remnants when reselecting
+        // (exported PLY files are not touched). Only reset when idle.
+        if (!pipelineState.value.isRunning) {
+            viewModelScope.launch(Dispatchers.IO) {
+                sharpApp.pipelineManager.reset()
+                val workDir = File(sharpApp.cacheDir, "sharp_work")
+                if (workDir.exists()) {
+                    FileUtil.deleteRecursively(workDir)
+                }
+            }
+        }
+
         val gen = ++imageLoadGeneration
         if (uri != null) {
             viewModelScope.launch(Dispatchers.IO) {
                 val details = loadImageDetails(uri)
-                // 仅当本次仍是"最新选择"时才发布详情, 过期结果直接丢弃
                 // Publish details only if this selection is still the latest; stale results are dropped
                 if (gen == imageLoadGeneration) _imageDetails.value = details
             }
@@ -138,28 +167,24 @@ class HomeViewModel(app: Application) : AndroidViewModel(app) {
     private suspend fun loadImageDetails(uri: Uri): ImageDetails? = withContext(Dispatchers.IO) {
         try {
             val resolver = sharpApp.contentResolver
+            val bytes = resolver.openInputStream(uri)?.use { it.readBytes() } ?: return@withContext null
 
-            // 尺寸 + MIME 类型
             // Size + MIME type
             val opts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-            resolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, opts) }
+            BitmapFactory.decodeByteArray(bytes, 0, bytes.size, opts)
             val width = opts.outWidth
             val height = opts.outHeight
             val format = opts.outMimeType?.substringAfter("/")?.uppercase() ?: "UNKNOWN"
 
-            // 文件大小
             // File size
-            val size = FileUtil.getFileSize(sharpApp, uri)
+            val size = bytes.size.toLong()
 
-            // EXIF 焦距 (仅 JPEG 支持)
             // EXIF focal length (JPEG only)
             var focal: Float? = null
             if (format == "JPEG" || format == "JPG") {
-                resolver.openInputStream(uri)?.use { input ->
-                    val exif = ExifInterface(input)
-                    val focalVal = exif.getAttributeDouble(ExifInterface.TAG_FOCAL_LENGTH, 0.0)
-                    if (focalVal > 0.0) focal = focalVal.toFloat()
-                }
+                val exif = ExifInterface(java.io.ByteArrayInputStream(bytes))
+                val focalVal = exif.getAttributeDouble(ExifInterface.TAG_FOCAL_LENGTH, 0.0)
+                if (focalVal > 0.0) focal = focalVal.toFloat()
             }
 
             ImageDetails(width, height, format, focal, size)
@@ -168,7 +193,6 @@ class HomeViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    /** 运行完整推理流程 */
     /** Runs the full inference pipeline. */
     fun runPipeline(imageUri: Uri) {
         viewModelScope.launch {
@@ -176,55 +200,48 @@ class HomeViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    // PLY 导出消息
     // PLY export message
     private val _exportMessage = mutableStateOf<String?>(null)
     val exportMessage: State<String?> = _exportMessage
 
-    /** 设置 PLY 保存目录 (SAF tree Uri 字符串) */
+    // Exporting flag (show progress)
+    private val _exporting = mutableStateOf(false)
+    val exporting: State<Boolean> = _exporting
+
     /** Sets the PLY save directory (SAF tree Uri string). */
     fun setPlySaveLocation(uriString: String) {
         viewModelScope.launch { sharpApp.settingsRepository.setPlySaveLocation(uriString) }
     }
 
-    /** 导出 PLY 到 SAF 所选目录 (经 contentResolver 写入, 无需存储权限) */
-    /** Exports the PLY into the chosen SAF directory (written via contentResolver, no storage permission needed). */
-    fun exportPly(treeUriString: String) {
+    /** Exports the PLY to the chosen directory (direct file write). */
+    fun exportPly(dirPath: String) {
+        if (_exporting.value) return
         viewModelScope.launch(Dispatchers.IO) {
+            _exporting.value = true
+            _exportMessage.value = null
             val src = sharpApp.pipelineManager.getLastPlyFile()
                 ?: run {
                     _exportMessage.value = MsgKey.ERR_PLY_MISSING
+                    _exporting.value = false
                     return@launch
                 }
             try {
-                val resolver = sharpApp.contentResolver
-                val treeUri = Uri.parse(treeUriString)
-                val rootDoc = DocumentsContract.buildDocumentUriUsingTree(
-                    treeUri,
-                    DocumentsContract.getTreeDocumentId(treeUri)
-                )
-
                 val baseName = _selectedImageName.value
                     ?.substringBeforeLast('.')
                     ?.takeIf { it.isNotBlank() }
                     ?: "sharp"
                 val name = "${baseName}_ply.ply"
-                val doc = DocumentsContract.createDocument(resolver, rootDoc, "application/octet-stream", name)
-                    ?: run {
-                        _exportMessage.value = MsgKey.ERR_EXPORT_CREATE
-                        return@launch
+                val dest = File(dirPath, name)
+                src.inputStream().use { input ->
+                    dest.outputStream().use { output ->
+                        input.copyTo(output, bufferSize = 64 * 1024)
                     }
-
-                resolver.openOutputStream(doc, "w")?.use { out ->
-                    src.inputStream().use { it.copyTo(out) }
-                } ?: run {
-                    _exportMessage.value = MsgKey.ERR_EXPORT_STREAM
-                    return@launch
                 }
-
                 _exportMessage.value = MsgKey.k(MsgKey.MSG_EXPORT_OK, name)
             } catch (e: Exception) {
                 _exportMessage.value = MsgKey.k(MsgKey.ERR_EXPORT_FAIL, e.message ?: "")
+            } finally {
+                _exporting.value = false
             }
         }
     }
@@ -246,9 +263,9 @@ fun HomeScreen(
     val selectedImageName by vm.selectedImageName
     val imageDetails by vm.imageDetails
     val exportMessage by vm.exportMessage
+    val exporting by vm.exporting
     val context = LocalContext.current
 
-    // 导出结果 → Snackbar (短时长, 避免长时间占据底部; 键在此处解析为当前语言)
     // Export result -> snackbar (short duration so it does not linger; keys are resolved in the current language)
     LaunchedEffect(exportMessage) {
         exportMessage?.let { msg ->
@@ -257,28 +274,36 @@ fun HomeScreen(
         }
     }
 
-    // 图片选择器
-    // Image picker
-    val imagePicker = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.GetContent()
-    ) { uri -> vm.setSelectedImage(uri) }
+    // Custom image picker (reads MediaStore directly, faster than system gallery)
+    // Needs READ_MEDIA_IMAGES (Android 13+) or READ_EXTERNAL_STORAGE (Android 12)
+    var showCustomPicker by remember { mutableStateOf(false) }
 
-    // PLY 保存目录选择器 (SAF tree, 持久授权)
-    // PLY save directory picker (SAF tree, persisted permission)
-    val plyDirPicker = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.OpenDocumentTree()
-    ) { uri: Uri? ->
-        if (uri != null) {
-            val granted = runCatching {
-                context.contentResolver.takePersistableUriPermission(
-                    uri,
-                    Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
-                )
-                true
-            }.getOrDefault(false)
-            if (granted) {
-                vm.setPlySaveLocation(uri.toString())
-            }
+    val storagePermission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+        Manifest.permission.READ_MEDIA_IMAGES
+    } else {
+        Manifest.permission.READ_EXTERNAL_STORAGE
+    }
+
+    val permissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) {
+            showCustomPicker = true
+        }
+    }
+
+    // Manage all files permission (API 30+ for PLY export)
+    val manageStorageLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult()
+    ) {
+        // User returned from settings, nothing to handle
+    }
+
+    fun openImagePicker() {
+        if (ContextCompat.checkSelfPermission(context, storagePermission) == PackageManager.PERMISSION_GRANTED) {
+            showCustomPicker = true
+        } else {
+            permissionLauncher.launch(storagePermission)
         }
     }
 
@@ -291,7 +316,6 @@ fun HomeScreen(
         modifier = Modifier.fillMaxSize().padding(Spacing.lg),
         verticalArrangement = Arrangement.spacedBy(Spacing.md)
     ) {
-        // 副标题 (主标题已固定在顶部 TopAppBar)
         // Subtitle (the main title lives in the top app bar)
         item {
             Text(
@@ -301,7 +325,6 @@ fun HomeScreen(
             )
         }
 
-        // 图片选择与预览
         // Image selection and preview
         item {
             Card(
@@ -317,7 +340,7 @@ fun HomeScreen(
                         color = MaterialTheme.colorScheme.onSurface
                     )
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        FilledTonalButton(onClick = { imagePicker.launch("image/*") }) {
+                        FilledTonalButton(onClick = { openImagePicker() }) {
                             Icon(Icons.Filled.AddPhotoAlternate, contentDescription = null)
                             Spacer(Modifier.size(Spacing.sm))
                             Text(stringResource(R.string.home_select_image))
@@ -330,7 +353,6 @@ fun HomeScreen(
                             modifier = Modifier.weight(1f)
                         )
                     }
-                    // AnimatedContent: 选择/未选择图片之间的淡入淡出过渡 (MD3 emphasized)
                     // AnimatedContent: cross-fade between selected/unselected states (MD3 emphasized)
                     AnimatedContent(
                         targetState = selectedImageUri,
@@ -350,7 +372,6 @@ fun HomeScreen(
                                         .clip(MaterialTheme.shapes.medium)
                                         .background(MaterialTheme.colorScheme.surfaceContainerHighest)
                                 )
-                                // 图片详细信息 (设置开启后显示)
                                 // Image details (shown when enabled in settings)
                                 if (settings.showImageDetails) {
                                     imageDetails?.let { d ->
@@ -433,7 +454,6 @@ fun HomeScreen(
             }
         }
 
-        // 运行按钮
         // Run button
         item {
             Text(
@@ -447,16 +467,54 @@ fun HomeScreen(
                 enabled = canRun,
                 modifier = Modifier.fillMaxWidth().height(48.dp)
             ) {
-                Icon(Icons.Filled.PlayArrow, contentDescription = null)
-                Spacer(Modifier.size(Spacing.sm))
-                Text(stringResource(R.string.home_run))
+                AnimatedContent(
+                    targetState = pipelineState.isRunning,
+                    transitionSpec = {
+                        if (targetState) {
+                            (fadeIn(tween(300)) + scaleIn(tween(300))) togetherWith
+                                (fadeOut(tween(200)) + scaleOut(tween(200)))
+                        } else {
+                            (fadeIn(tween(300)) + scaleIn(tween(300))) togetherWith
+                                (fadeOut(tween(200)) + scaleOut(tween(200)))
+                        }
+                    }
+                ) { running ->
+                    if (running) {
+                        val infiniteTransition = rememberInfiniteTransition()
+                        val pulseAlpha by infiniteTransition.animateFloat(
+                            initialValue = 0.4f,
+                            targetValue = 1.0f,
+                            animationSpec = infiniteRepeatable(
+                                animation = tween(800),
+                                repeatMode = RepeatMode.Reverse
+                            )
+                        )
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.graphicsLayer { alpha = pulseAlpha }
+                        ) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(20.dp),
+                                strokeWidth = 2.dp
+                            )
+                            Spacer(Modifier.size(Spacing.sm))
+                            Text(stringResource(R.string.home_running))
+                        }
+                    } else {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Filled.PlayArrow, contentDescription = null)
+                            Spacer(Modifier.size(Spacing.sm))
+                            Text(stringResource(R.string.home_run))
+                        }
+                    }
+                }
             }
             val missing = ModelType.entries.filter { !models.containsKey(it) }
             if (missing.isNotEmpty()) {
                 Text(
                     text = stringResource(
                         R.string.home_missing_models,
-                        missing.joinToString { it.displayName }
+                        missing.map { stringResource(it.nameRes) }.joinToString()
                     ),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.error,
@@ -465,7 +523,6 @@ fun HomeScreen(
             }
         }
 
-        // 错误提示 (消息键在此解析为当前语言)
         // Error banner (message keys are resolved in the current language)
         pipelineState.errorMessage?.let { msg ->
             item {
@@ -493,10 +550,9 @@ fun HomeScreen(
             }
         }
 
-        // 推理进度
-        // Inference progress
-        if (pipelineState.stages.isNotEmpty() &&
-            (pipelineState.isRunning || pipelineState.totalElapsedMs > 0 || pipelineState.errorMessage != null)) {
+        // Inference progress (only visible during or after inference)
+        val showProgress = pipelineState.isRunning || pipelineState.totalElapsedMs > 0 || pipelineState.errorMessage != null
+        if (showProgress) {
             item {
                 Text(
                     text = stringResource(R.string.home_progress_section),
@@ -506,42 +562,46 @@ fun HomeScreen(
             }
         }
 
-        // 各阶段进度卡片
-        // Per-stage progress cards
-        items(pipelineState.stages) { stage ->
-            ProgressCard(stage = stage)
+        // Per-stage progress cards (only visible during or after inference)
+        if (showProgress) {
+            items(pipelineState.stages) { stage ->
+                ProgressCard(stage = stage)
+            }
         }
 
-        // 总耗时 (仅在推理完成后显示)
-        // Total time (shown only after inference completes)
-        if (!pipelineState.isRunning && pipelineState.totalElapsedMs > 0 && pipelineState.errorMessage == null) {
+        // Total time (shown only after inference completes, with fade-in animation)
+        val showTotal = !pipelineState.isRunning && pipelineState.totalElapsedMs > 0 && pipelineState.errorMessage == null
+        if (showTotal) {
             item {
-                Card(
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.tertiaryContainer),
-                    modifier = Modifier.fillMaxWidth()
+                AnimatedVisibility(
+                    visible = true,
+                    enter = fadeIn(tween(400)) + expandVertically(tween(400))
                 ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth().padding(Spacing.lg),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
+                    Card(
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.tertiaryContainer),
+                        modifier = Modifier.fillMaxWidth()
                     ) {
-                        Text(
-                            text = stringResource(R.string.home_done_total),
-                            style = MaterialTheme.typography.titleMedium,
-                            color = MaterialTheme.colorScheme.onTertiaryContainer
-                        )
-                        Text(
-                            text = formatDuration(pipelineState.totalElapsedMs),
-                            style = MaterialTheme.typography.headlineMedium,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onTertiaryContainer
-                        )
+                        Column(
+                            modifier = Modifier.fillMaxWidth().padding(Spacing.lg),
+                            verticalArrangement = Arrangement.spacedBy(Spacing.xs)
+                        ) {
+                            Text(
+                                text = stringResource(R.string.home_done_total),
+                                style = MaterialTheme.typography.titleMedium,
+                                color = MaterialTheme.colorScheme.onTertiaryContainer
+                            )
+                            Text(
+                                text = formatDuration(pipelineState.totalElapsedMs),
+                                style = MaterialTheme.typography.headlineMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onTertiaryContainer
+                            )
+                        }
                     }
                 }
             }
         }
 
-        // PLY 导出 (推理完成后显示导出按钮, 导出到设置中的保存位置)
         // PLY export (available after inference; exports to the directory set in settings)
         item {
             Text(
@@ -554,9 +614,8 @@ fun HomeScreen(
                     pipelineState.totalElapsedMs > 0 &&
                     pipelineState.errorMessage == null
 
-            // 导出到设置中的 SAF 保存目录; 未设置时先让用户选目录
             // Export to the SAF directory from settings; pick a directory first if unset
-            val hasSaveDir = settings.plySaveLocation.startsWith("content://")
+            val hasSaveDir = settings.plySaveLocation.isNotBlank()
 
             Card(
                 colors = CardDefaults.cardColors(
@@ -568,17 +627,65 @@ fun HomeScreen(
                     modifier = Modifier.padding(Spacing.lg),
                     verticalArrangement = Arrangement.spacedBy(Spacing.sm)
                 ) {
-                    FilledTonalButton(
+                    Button(
                         onClick = {
-                            if (hasSaveDir) vm.exportPly(settings.plySaveLocation)
-                            else plyDirPicker.launch(null)
+                            if (hasSaveDir) {
+                                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R &&
+                                    !Environment.isExternalStorageManager()
+                                ) {
+                                    val intent = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION).apply {
+                                        data = Uri.parse("package:${context.packageName}")
+                                    }
+                                    manageStorageLauncher.launch(intent)
+                                } else {
+                                    vm.exportPly(settings.plySaveLocation)
+                                }
+                            }
                         },
-                        enabled = plyReady,
+                        enabled = plyReady && !exporting,
                         modifier = Modifier.fillMaxWidth().height(48.dp)
                     ) {
-                        Icon(Icons.Filled.Save, contentDescription = null)
-                        Spacer(Modifier.size(Spacing.sm))
-                        Text(if (hasSaveDir) stringResource(R.string.home_export_ply) else stringResource(R.string.home_choose_dir))
+                        AnimatedContent(
+                            targetState = exporting,
+                            transitionSpec = {
+                                if (targetState) {
+                                    (fadeIn(tween(300)) + scaleIn(tween(300))) togetherWith
+                                        (fadeOut(tween(200)) + scaleOut(tween(200)))
+                                } else {
+                                    (fadeIn(tween(300)) + scaleIn(tween(300))) togetherWith
+                                        (fadeOut(tween(200)) + scaleOut(tween(200)))
+                                }
+                            }
+                        ) { isExporting ->
+                            if (isExporting) {
+                                val infiniteTransition = rememberInfiniteTransition()
+                                val pulseAlpha by infiniteTransition.animateFloat(
+                                    initialValue = 0.4f,
+                                    targetValue = 1.0f,
+                                    animationSpec = infiniteRepeatable(
+                                        animation = tween(800),
+                                        repeatMode = RepeatMode.Reverse
+                                    )
+                                )
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.graphicsLayer { alpha = pulseAlpha }
+                                ) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(20.dp),
+                                        strokeWidth = 2.dp
+                                    )
+                                    Spacer(Modifier.size(Spacing.sm))
+                                    Text(stringResource(R.string.home_exporting))
+                                }
+                            } else {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(Icons.Filled.Save, contentDescription = null)
+                                    Spacer(Modifier.size(Spacing.sm))
+                                    Text(if (hasSaveDir) stringResource(R.string.home_export_ply) else stringResource(R.string.home_choose_dir))
+                                }
+                            }
+                        }
                     }
                     Text(
                         text = if (hasSaveDir)
@@ -600,42 +707,99 @@ fun HomeScreen(
             }
         }
     }
+
+    if (showCustomPicker) {
+        ImagePickerDialog(
+            title = stringResource(R.string.picker_title),
+            closeContentDescription = stringResource(R.string.picker_close),
+            onDismiss = { showCustomPicker = false },
+            onImageSelected = { uri ->
+                vm.setSelectedImage(uri)
+                showCustomPicker = false
+            },
+            imageDirs = settings.imageDirectories
+        )
+    }
 }
 
 /**
- * 图片预览: 从 Uri 解码 (含采样) 并以 fit 模式显示在矩形框内。
- * Image preview: decodes from the Uri (with sampling) and fits it inside the box.
+ * 图片预览: 从 Uri 解码 (自适应采样) 并以 fit 模式显示在矩形框内。
+ * Image preview: decodes from the Uri (with adaptive sampling) and fits it inside the box.
  * 比例不同时留黑边 (letterbox), 不裁剪填满。
  * Aspect mismatches are letterboxed instead of cropped.
+ *
+ * 采样策略: 先用 inJustDecodeBounds 获取原始尺寸, 再根据目标视图高度 (targetHeightDp)
+ * 计算最优 inSampleSize (2 的幂), 避免加载过大图片浪费内存。
+ * Sampling strategy: first reads the original dimensions via inJustDecodeBounds,
+ * then computes the optimal inSampleSize (power of 2) based on the target view
+ * height (targetHeightDp), avoiding excessive memory usage from oversized images.
+ *
+ * @param targetHeightDp 目标视图高度 (dp), 用于计算采样率, 默认 260dp
+ * @param targetHeightDp target view height (dp) for computing sample size, default 260dp
  */
 @Composable
-private fun ImagePreview(uri: Uri, modifier: Modifier = Modifier) {
+private fun ImagePreview(uri: Uri, modifier: Modifier = Modifier, targetHeightDp: Int = 260) {
     val context = LocalContext.current
-    val bitmap by produceState<android.graphics.Bitmap?>(initialValue = null, uri) {
-        value = withContext(Dispatchers.IO) {
+    var bitmap by remember(uri) { mutableStateOf<android.graphics.Bitmap?>(null) }
+    var isLoading by remember(uri) { mutableStateOf(true) }
+
+    // Recycle the old bitmap when switching images or leaving composition
+    DisposableEffect(uri) {
+        onDispose { bitmap?.recycle() }
+    }
+
+    LaunchedEffect(uri) {
+        isLoading = true
+        // Recycle the previous bitmap before loading a new one
+        bitmap?.recycle()
+        bitmap = null
+
+        bitmap = withContext(Dispatchers.IO) {
             runCatching {
+                val targetHeightPx = (targetHeightDp * context.resources.displayMetrics.density).toInt()
                 context.contentResolver.openInputStream(uri)?.use { input ->
-                    val opts = BitmapFactory.Options().apply { inSampleSize = 4 }
+                    // Step 1: decode bounds only, no pixel allocation
+                    val opts = BitmapFactory.Options().apply {
+                        inJustDecodeBounds = true
+                    }
                     BitmapFactory.decodeStream(input, null, opts)
+                    input.close()
+
+                    // Step 2: compute optimal sample size (power of 2, decoded height >= target)
+                    val sampleSize = calculateSampleSize(opts.outHeight, targetHeightPx)
+
+                    // Step 3: decode with the computed sample size
+                    val decodeOpts = BitmapFactory.Options().apply {
+                        inSampleSize = sampleSize
+                    }
+                    context.contentResolver.openInputStream(uri)?.use { stream ->
+                        BitmapFactory.decodeStream(stream, null, decodeOpts)
+                    }
                 }
             }.getOrNull()
         }
+        isLoading = false
     }
 
     Box(
         modifier = modifier,
         contentAlignment = Alignment.Center
     ) {
-        val bmp = bitmap
-        if (bmp != null) {
-            Image(
-                bitmap = bmp.asImageBitmap(),
-                contentDescription = stringResource(R.string.home_image_preview_cd),
-                contentScale = ContentScale.Fit,
-                modifier = Modifier.fillMaxSize()
+        when {
+            isLoading -> CircularProgressIndicator(
+                modifier = Modifier.size(32.dp),
+                strokeWidth = 3.dp
             )
-        } else {
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            bitmap != null -> {
+                val bmp = bitmap!!
+                Image(
+                    bitmap = bmp.asImageBitmap(),
+                    contentDescription = stringResource(R.string.home_image_preview_cd),
+                    contentScale = ContentScale.Fit,
+                    modifier = Modifier.fillMaxSize()
+                )
+            }
+            else -> Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 Icon(
                     imageVector = Icons.Filled.BrokenImage,
                     contentDescription = null,
@@ -651,4 +815,20 @@ private fun ImagePreview(uri: Uri, modifier: Modifier = Modifier) {
             }
         }
     }
+}
+
+/**
+ * 计算最优 inSampleSize (2 的幂), 保证解码后高度 >= targetHeight。
+ * Computes the optimal inSampleSize (power of 2), ensuring decoded height >= targetHeight.
+ *
+ * 800=5 → 取 4 → 解码后 1000px, 足够清晰且省内存。
+ * E.g. original 4000px, target 800px: 4000/800=5 → use 4 → decoded 1000px, sharp enough.
+ */
+private fun calculateSampleSize(originalHeight: Int, targetHeight: Int): Int {
+    if (targetHeight <= 0 || originalHeight <= targetHeight) return 1
+    var sampleSize = 1
+    while (originalHeight / (sampleSize * 2) >= targetHeight) {
+        sampleSize *= 2
+    }
+    return sampleSize
 }

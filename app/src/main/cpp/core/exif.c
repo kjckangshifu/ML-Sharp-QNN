@@ -1,6 +1,6 @@
 /* exif.c — JPEG APP1 EXIF 解析
  *
- * 结构: SOI -> APP1(0xFFE1) "Exif\0\0" -> TIFF 头(II/MM, 42, IFD0 偏移)
+ * MM, 42, IFD0 偏移)
  *       IFD0: Orientation(0x0112) / ExifOffset(0x8769)
  *       ExifSubIFD: FocalLength(0x920A) / FocalLengthIn35mmFilm(0xA405, 0xA40C)
  */
@@ -74,10 +74,10 @@ static void parse_ifd(const unsigned char *p, size_t size, unsigned off, int le,
             if (tag == 0x920A && have_d)
                 out->focal_len_mm = dval;
             else if (tag == 0xA405) {
-                /* FocalLengthIn35mmFilm: EXIF 规范为 SHORT (type=3),
-                   但部分相机/软件会写成 LONG/RATIONAL, 兼容所有数值类型。
-                   修复: 原代码仅在 have_d (RATIONAL/DOUBLE) 时读取,
-                   导致标准 SHORT 类型被忽略, 回退到 FocalLength 或 30mm 默认值。 */
+                /* FocalLengthIn35mmFilm: EXIF spec says SHORT (type=3),
+                   But some cameras/software write it as LONG/RATIONAL, so we handle all numeric types.
+                   Fix: the original code only read when have_d (RATIONAL/DOUBLE),
+                   causing standard SHORT type to be ignored, falling back to FocalLength or 30mm default. */
                 if (have_u)
                     out->focal_len_35mm = (double)uval;
                 else if (have_d)

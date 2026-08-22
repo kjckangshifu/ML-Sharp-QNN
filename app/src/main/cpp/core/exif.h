@@ -11,9 +11,9 @@ extern "C" {
 #endif
 
 typedef struct {
-    int orientation;     /* 1..8, 0 = 无 EXIF 或无 Orientation / 1..8, 0 = no EXIF or no Orientation */
-    double focal_len_mm; /* FocalLength 0x920A, 0 = 无 / FocalLength 0x920A, 0 = none */
-    double focal_len_35mm; /* FocalLengthIn35mmFilm 0xA405 / 0xA40C, 0 = 无 / FocalLengthIn35mmFilm 0xA405 / 0xA40C, 0 = none */
+    int orientation;     /* 1..8, 0 = no EXIF or no Orientation */
+    double focal_len_mm; /* FocalLength 0x920A, 0 = none */
+    double focal_len_35mm; /* FocalLengthIn35mmFilm 0xA405 / 0xA40C, 0 = none */
 } ExifData;
 
 /* 从 JPEG 字节流中解析 EXIF, 成功(找到 Exif APP1 段)返回 1, 否则 0

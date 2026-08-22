@@ -34,15 +34,20 @@
     <string name="home_image_load_failed">Failed to load image</string>
     <string name="home_run_section">Inference</string>
     <string name="home_run">Run Inference</string>
+    <string name="home_running">Running…</string>
     <string name="home_missing_models">Import at Models first: %1$s</string>
     <string name="home_progress_section">Progress</string>
     <string name="home_done_total">Inference Done · Total Time</string>
     <string name="home_export_section">Export Result</string>
     <string name="home_export_ply">Export PLY</string>
+    <string name="home_exporting">Exporting…</string>
     <string name="home_choose_dir">Choose Save Directory</string>
     <string name="home_save_to">Saving to: %1$s</string>
     <string name="home_no_save_dir">No save directory yet; tap to choose one</string>
     <string name="home_export_after_done">PLY can be exported after inference completes</string>
+
+    <string name="picker_title">Select Image</string>
+    <string name="picker_close">Close</string>
 
     <!-- ====== Models ====== -->
     <string name="models_subtitle">5 model parts: Patch Encoder (PE) · Image Encoder (IE) · Feature Fusion · Disparity Estimation · Gaussian Delta</string>
@@ -52,7 +57,7 @@
     <string name="models_artifact">Artifact</string>
     <string name="models_not_imported_hint">No model imported; pick a .bin or .dlc file</string>
     <string name="models_compiling">Compiling, please wait…</string>
-    <string name="models_compile_cancel_hint">Cancellation applies between compilation steps; resources are released and partial artifacts removed</string>
+    <string name="models_compile_cancel_hint">Compilation cannot be directly interrupted; after clicking cancel, the compiled file will be deleted upon completion</string>
     <string name="models_cancel_compile">Cancel Compile</string>
     <string name="models_import">Import</string>
     <string name="models_compile">Compile</string>
@@ -63,7 +68,8 @@
     <string name="models_download_title">Pre-converted Models</string>
     <string name="models_download_desc">Download all 5 DLC models from HuggingFace in one tap; no manual import needed</string>
     <string name="models_download_btn">Download W8A16</string>
-    <string name="models_download_downloading">Downloading %1$s (%2$d/%3$d)…</string>
+    <string name="models_download_downloading">Downloading %1$s…</string>
+    <string name="models_download_preparing">Preparing…</string>
     <string name="models_download_complete">Download complete: %1$d/%2$d files</string>
     <string name="models_download_failed">Download failed: %1$s</string>
     <string name="models_download_cancel">Cancel</string>
@@ -83,6 +89,7 @@
     <string name="model_rest_c">Gaussian Delta</string>
 
     <!-- ====== Pipeline stages ====== -->
+    <string name="stage_init">Initialization</string>
     <string name="stage_compile">Model Compilation</string>
     <string name="stage_decode">Decode Image</string>
     <string name="stage_pre">Preprocess &amp; Split Patches</string>
@@ -93,6 +100,8 @@
     <string name="stage_rest_b">Disparity Estimation</string>
     <string name="stage_rest_c">Gaussian Delta</string>
     <string name="stage_post">Point Cloud Generation</string>
+    <string name="detail_init_qnn">Initializing QNN runtime…</string>
+    <string name="detail_loading_model">Loading %1$s…</string>
     <string name="detail_compiling">Compiling %1$s…</string>
     <string name="detail_compiled">%1$s compiled</string>
     <string name="detail_cancelled">Compilation interrupted</string>
@@ -114,8 +123,35 @@
     <string name="settings_ply_not_set">Not set; choose a directory when exporting</string>
     <string name="settings_ply_current">Current: %1$s</string>
     <string name="settings_choose_dir">Choose Directory</string>
+    <string name="settings_ply_optimize">PLY Export Optimization</string>
+    <string name="settings_ply_optimize_desc">Reduces point count and removes floaters via opacity pruning, outlier removal and kNN merge</string>
+    <string name="settings_ply_knn_merge">kNN Merge</string>
+    <string name="settings_ply_knn_merge_desc">Merges nearby Gaussians using moment matching, preserving visual quality while reducing point count</string>
+    <string name="settings_ply_k">Neighbors (k)</string>
+    <string name="settings_ply_k_hint">More neighbors = gentler merge, fewer = more aggressive; 16 is the recommended starting point</string>
+    <string name="settings_ply_merge_cap">Merge Cap</string>
+    <string name="settings_ply_merge_cap_hint">Maximum fraction of remaining points that can be merged in a single pass; lower = more gradual, higher = more aggressive</string>
+    <string name="settings_ply_prune">Opacity Pruning</string>
+    <string name="settings_ply_prune_desc">Removes low-opacity Gaussians before merging; higher = more aggressive</string>
+    <string name="settings_ply_prune_threshold">Threshold</string>
+    <string name="settings_ply_sor">Statistical Outlier Removal</string>
+    <string name="settings_ply_sor_desc">Removes spatially isolated floaters; set neighbors to 0 to disable</string>
+    <string name="settings_ply_sor_nb">Neighbors</string>
+    <string name="settings_ply_sor_std">Std Multiplier</string>
+    <string name="settings_ply_merge_ratio">Target Ratio</string>
+    <string name="stage_ply_optimize">PLY Optimize</string>
+    <string name="stage_ply_prune">Prune</string>
+    <string name="stage_ply_sor">SOR</string>
+    <string name="stage_ply_knn">kNN</string>
+    <string name="settings_off">Off</string>
     <string name="settings_image_details">Show Image Details</string>
     <string name="settings_image_details_desc">Shows focal length, format and size when an image is picked</string>
+    <string name="settings_image_dirs">Image Directory Filter</string>
+    <string name="settings_image_dirs_desc">Choose which folders to show in the image picker; empty = show all</string>
+    <string name="settings_image_dirs_empty">All directories (no filter)</string>
+    <string name="settings_image_dirs_add">Add Directory</string>
+    <string name="settings_image_dirs_remove">Remove</string>
+    <string name="settings_image_dirs_confirm">Confirm Selection</string>
     <string name="settings_htp_perf">HTP Performance Scheduling</string>
     <string name="settings_htp_perf_desc">Controls HTP voltage-corner voting and the DCVS policy; changes take effect after a restart</string>
     <string name="settings_locked_mode">Locked Corner (default)</string>
@@ -131,7 +167,7 @@
     <string name="settings_dcvs_policy">DCVS Policy</string>
     <string name="settings_dcvs_rule">Rule: min must be below max and the target inside (min &lt; target &lt;= max); corrected automatically on change</string>
     <string name="settings_dynamic_color">Dynamic Color</string>
-    <string name="settings_dynamic_color_desc">Follows the wallpaper for theme colors (Android 12+); off uses the built-in blue-violet palette</string>
+    <string name="settings_dynamic_color_desc">Follows the system theme color (Android 12+); off uses the built-in blue-violet palette</string>
     <string name="settings_logging">Log Recording</string>
     <string name="settings_logging_desc">Records logs in real time into Download/sharp_log/; auto-records every time you enter the app</string>
     <string name="settings_cache">Cache</string>
@@ -157,6 +193,17 @@
 
     <!-- ====== Voltage corners / DCVS ====== -->
     <string name="corner_min">MIN (lowest)</string>
+    <string name="corner_svs2">SVS2</string>
+    <string name="corner_svs">SVS</string>
+    <string name="corner_svs_plus">SVS_PLUS</string>
+    <string name="corner_nom">NOM</string>
+    <string name="corner_nom_plus">NOM_PLUS</string>
+    <string name="corner_turbo">TURBO</string>
+    <string name="corner_turbo_plus">TURBO_PLUS</string>
+    <string name="corner_turbo_l2">TURBO_L2</string>
+    <string name="corner_turbo_l3">TURBO_L3</string>
+    <string name="corner_turbo_l4">TURBO_L4</string>
+    <string name="corner_turbo_l5">TURBO_L5</string>
     <string name="corner_max">MAX (highest)</string>
     <string name="dcvs_up_down">Adjust Both</string>
     <string name="dcvs_up_only">Up Only</string>

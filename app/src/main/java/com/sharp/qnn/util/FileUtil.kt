@@ -15,14 +15,14 @@ object FileUtil {
     /**
      * 将 SAF URI 内容复制到目标文件。
      * Copies the content of a SAF URI to the destination file.
-     * @return true 表示复制成功 / true on success
+     * true on success
      */
     fun copyUriToFile(context: Context, uri: Uri, destFile: File): Boolean {
         return try {
             ensureDir(destFile.parentFile)
             context.contentResolver.openInputStream(uri)?.use { input ->
                 destFile.outputStream().use { output ->
-                    input.copyTo(output)
+                    input.copyTo(output, bufferSize = 64 * 1024)
                 }
             } ?: return false
             true
@@ -58,14 +58,12 @@ object FileUtil {
         if (name.isNullOrBlank()) {
             name = uri.lastPathSegment ?: "unknown"
         }
-        // Photo Picker 数字 ID 文件名 (如 "1000000041.jpg"): 反查 MediaStore 真实文件名
         // Photo Picker digit-ID names (e.g. "1000000041.jpg"): look up the real
         // MediaStore display name
         val realName = queryRealDisplayName(context, uri, name)
         return realName ?: name
     }
 
-    /** 反查 MediaStore 中该媒体 ID 的真实文件名 (需要 READ_MEDIA_IMAGES 权限, 失败返回 null) */
     /** Reverse-look up the real MediaStore name for the media ID (requires
      * READ_MEDIA_IMAGES; returns null on failure) */
     private fun queryRealDisplayName(context: Context, uri: Uri, displayName: String): String? {
@@ -107,7 +105,6 @@ object FileUtil {
         }
     }
 
-    /** 确保目录存在，不存在则创建 */
     /** Ensure the directory exists, creating it if missing */
     fun ensureDir(dir: File?): Boolean {
         if (dir == null) return false
@@ -115,13 +112,11 @@ object FileUtil {
         return dir.mkdirs()
     }
 
-    /** 递归删除目录及其内容 */
     /** Recursively delete a directory and its contents */
     fun deleteRecursively(dir: File): Boolean {
         return dir.deleteRecursively()
     }
 
-    /** 计算文件或目录的总大小 (递归, 单位: 字节) */
     /** Total size of a file or directory in bytes (recursive) */
     fun sizeOf(file: File): Long {
         if (file.isFile) return file.length()
@@ -141,7 +136,7 @@ object FileUtil {
     }
 
     /**
-     * 格式化文件大小: 字节 → "X.XX MB" / "X KB" / "X B"。
+     * "X KB" / "X B"。
      * Format file size: bytes → "X.XX MB" / "X KB" / "X B".
      */
     fun formatFileSize(bytes: Long): String {

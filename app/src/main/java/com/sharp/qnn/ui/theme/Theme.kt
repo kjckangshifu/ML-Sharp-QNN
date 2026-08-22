@@ -11,8 +11,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 
-// 默认蓝紫色调色板 (Android 12 以下或关闭动态色彩时使用)
-// Default blue-purple palette (used below Android 12 or when dynamic color is off)
+// Default blue-purple palette (used below Android 12 or when system theme color is off)
 private val LightColors = lightColorScheme(
     primary = BluePurple40,
     onPrimary = Color.White,
@@ -34,7 +33,6 @@ private val LightColors = lightColorScheme(
     onBackground = Neutral10,
     surface = Neutral99,
     onSurface = Neutral10,
-    // surfaceContainer 阶梯: 与 surface 同源的中性升阶, 保证 fallback 下层级色调一致
     // surfaceContainer steps: neutral elevations from the same family as surface,
     // keeping tonal hierarchy consistent under the fallback palette
     surfaceContainerLowest = LightSurfaceContainerLowest,
@@ -96,10 +94,10 @@ private val DarkColors = darkColorScheme(
  * SHARP QNN 主题。
  * SHARP QNN theme.
  *
- * - Android 12+ 默认启用动态色彩 (Dynamic Color)；
- * - Dynamic color is enabled by default on Android 12+.
- * - 低版本或关闭动态色彩时回退到蓝紫色调色板。
- * - Falls back to the blue-purple palette on older versions or when dynamic color is off.
+ * - Android 12+ 默认启用系统主题色 (Material You)；
+ * - System theme color (Material You) is enabled by default on Android 12+.
+ * - 低版本或关闭时回退到蓝紫色调色板。
+ * - Falls back to the blue-purple palette on older versions or when disabled.
  */
 @Composable
 fun SHARPQNNTheme(

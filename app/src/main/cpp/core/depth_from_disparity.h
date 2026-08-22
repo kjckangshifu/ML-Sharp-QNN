@@ -8,7 +8,7 @@
  *   Input: disparity [1, 2, H, W] or [B, C, H, W] (C=2 layers)
  *   输出:  depth    [1, 2, H, W]
  *   Output: depth   [1, 2, H, W]
- *   参数:  d_factor = f_px / original_width  (标量)
+ *   original_width  (标量)
  *   Args:  d_factor = f_px / original_width  (scalar)
  */
 #ifndef DEPTH_FROM_DISPARITY_H

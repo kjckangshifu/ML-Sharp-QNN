@@ -2,6 +2,8 @@ package com.sharp.qnn.ui.components
 
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -39,9 +41,9 @@ import com.sharp.qnn.ui.theme.Spacing
  * 单阶段进度卡片 (MD3 Card)。
  * A progress card for a single stage (MD3 Card).
  *
- * 展示: 阶段名、LinearProgressIndicator、当前/总数、耗时、完成勾号。
+ * 总数、耗时、完成勾号。
  * Shows: stage name, LinearProgressIndicator, current/total, elapsed time, done check.
- * 使用 animateColorAsState 在 idle/running/complete 之间平滑过渡强调色。
+ * running/complete 之间平滑过渡强调色。
  * Uses animateColorAsState to smoothly transition the accent color between
  * idle / running / complete states.
  */
@@ -50,7 +52,7 @@ fun ProgressCard(
     stage: StageState,
     modifier: Modifier = Modifier
 ) {
-    // 强调色: 完成=tertiary, 运行中=primary, 待命=outline; animateColorAsState 平滑过渡
+    // Accent color: done=tertiary, running=primary, pending=outline; smooth animateColorAsState transition
     // Accent: done=tertiary, running=primary, idle=outline; animated via animateColorAsState
     val targetAccent = when {
         stage.isComplete -> MaterialTheme.colorScheme.tertiary
@@ -63,7 +65,7 @@ fun ProgressCard(
         label = "accentColor"
     )
 
-    // 运行中卡片使用更高层级的 tonal surface (surfaceContainerHigh), 完成后回退到 surfaceContainerLow
+    // Running card uses higher tonal surface (surfaceContainerHigh), falls back to surfaceContainerLow when done
     // Running cards use a higher tonal surface (surfaceContainerHigh); done cards drop back to surfaceContainerLow
     val targetContainer = when {
         stage.isRunning -> MaterialTheme.colorScheme.surfaceContainerHigh
@@ -75,6 +77,21 @@ fun ProgressCard(
         label = "containerColor"
     )
 
+    // Smooth progress animation
+    // Use spring to smoothly transition to target progress, to 100% when done
+    // Spring to the target progress value; animate to 100% on completion
+    val progressTarget = when {
+        stage.isComplete -> 1f
+        stage.isRunning -> stage.progress
+        else -> 0f
+    }
+
+    val displayProgress by animateFloatAsState(
+        targetValue = progressTarget,
+        animationSpec = spring(dampingRatio = 0.6f, stiffness = 100f),
+        label = "smoothProgress"
+    )
+
     Card(
         modifier = modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(containerColor = containerColor)
@@ -83,9 +100,8 @@ fun ProgressCard(
             modifier = Modifier.padding(Spacing.md),
             verticalArrangement = Arrangement.spacedBy(Spacing.sm)
         ) {
-            // 标题行: 阶段名 + 完成勾号
             // Title row: stage name + done check
-            // 阶段名优先取本地化资源 (nameRes), 无资源时回退英文规范名
+            // Stage name prefers localized resource (nameRes), falls back to canonical English name
             // Stage name prefers the localized resource (nameRes) and falls back to the English name
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
@@ -104,18 +120,16 @@ fun ProgressCard(
                 }
             }
 
-            // 进度条 (运行中或已完成时显示)
             // Progress bar (visible while running or done)
             if (stage.isRunning || stage.isComplete) {
                 LinearProgressIndicator(
-                    progress = { stage.progress },
+                    progress = { displayProgress },
                     modifier = Modifier.fillMaxWidth().height(6.dp),
                     color = accent,
                     trackColor = MaterialTheme.colorScheme.surfaceContainerHighest
                 )
             }
 
-            // 详情行: 当前/总数 · 耗时
             // Detail row: current/total · elapsed time
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -146,7 +160,6 @@ fun ProgressCard(
                 }
             }
 
-            // 运行中详情 (跳过默认空详情)
             // Running detail (skips the empty-detail placeholder)
             if (stage.isRunning && stage.detail.isNotBlank()) {
                 Text(
@@ -159,7 +172,6 @@ fun ProgressCard(
     }
 }
 
-/** 预览: 运行中的阶段卡片 */
 /** Preview: a running stage card */
 @Preview(showBackground = true, widthDp = 360)
 @Composable
@@ -167,16 +179,15 @@ private fun ProgressCardRunningPreview() {
     SHARPQNNTheme(dynamicColor = false) {
         ProgressCard(
             stage = StageState(
-                id = 2, name = "图块编码",
+                id = 2, name = "Patch Encoding",
                 current = 21, total = 35, elapsedMs = 84_532,
-                detail = "Patch 21/35 · 峰值 1.2s/patch",
+                detail = "Patch 21/35 · peak 1.2s/patch",
                 isRunning = true
             )
         )
     }
 }
 
-/** 预览: 已完成阶段卡片 */
 /** Preview: a completed stage card */
 @Preview(showBackground = true, widthDp = 360)
 @Composable
@@ -184,7 +195,7 @@ private fun ProgressCardDonePreview() {
     SHARPQNNTheme(dynamicColor = false) {
         ProgressCard(
             stage = StageState(
-                id = 4, name = "特征合并",
+                id = 4, name = "Feature Merge",
                 current = 6, total = 6, elapsedMs = 210,
                 isComplete = true
             )

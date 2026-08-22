@@ -24,11 +24,11 @@ extern "C" {
  * Saves metric Gaussians to a .ply file.
  * @param gaussians  输入 metric gaussians (平铺布局 [3,N] per attr)
  *                  Input metric gaussians (flat layout [3,N] per attribute)
- * @param f_px       焦距 (像素) / focal length (px)
- * @param image_w    图像宽 / image width
- * @param image_h    图像高 / image height
- * @param filepath   输出文件路径 / output file path
- * @return 0=成功 / 0=success
+ * focal length (px)
+ * image width
+ * image height
+ * output file path
+ * 0=success
  */
 int save_ply(const Gaussians3DFlat *gaussians,
              float f_px, int image_w, int image_h,

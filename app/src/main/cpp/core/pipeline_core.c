@@ -6,7 +6,7 @@
  *   sharp_merge      : 设备输出 (pe_out + ie_out) -> 6 个特征 raw (NCHW, 供 rest.onnx)
  *                      device outputs (pe_out + ie_out) -> 6 feature raws (NCHW, for rest.onnx)
  *   sharp_post       : image.raw + delta.raw + disparity.raw -> output.ply
- *   sharp_prep_image : JPEG/PNG -> EXIF 旋转/焦距 -> resize 1536 -> image.raw
+ *   焦距 -> resize 1536 -> image.raw
  *
  * 从 pipeline.c 的 main() 提取, 暴露为可调用函数供 JNI 层使用。
  * Extracted from pipeline.c's main(); exposed as callable functions for the JNI layer.
@@ -34,7 +34,7 @@
 #define CORE_LOGE(...) fprintf(stderr, "[SharpCore] " __VA_ARGS__)
 #endif
 
-#include "sharp_pipeline.h"    /* 库接口定义 / library interface definitions */
+#include "sharp_pipeline.h"    /* library interface definitions */
 
 #include "normalizer.h"
 #include "pyramid.h"
@@ -75,7 +75,7 @@ static void sharp_progress(int stageId, const char *stageName,
 
 /* ─────────────── 工具函数 ───────────────
  * ─────────────── Utilities ───────────────
- * 失败一律返回错误码/NULL, 由调用方清理已分配资源并向上返回。
+ * NULL, 由调用方清理已分配资源并向上返回。
  * On failure always return an error code / NULL so the caller can clean up
  * allocated resources and propagate. */
 static float *read_raw(const char *path, size_t n)
@@ -135,7 +135,7 @@ static double focal_length_from_exif(const ExifData *ex)
 
 /* 按 EXIF Orientation 旋转 (PIL transpose 语义), HWC uint8 像素
  * Rotates by EXIF Orientation (PIL transpose semantics), HWC uint8 pixels.
- * 在 uint8 域旋转 (旋转 = 元素重排, 无插值/算术, 与 float 域旋转逐位等价):
+ * 算术, 与 float 域旋转逐位等价):
  * Rotation happens in the uint8 domain (rotation = element reorder, no
  * interpolation/arithmetic, bit-equivalent to rotating in float):
  * 48MP 时峰值从 src+out 两份 float (2*576MB=1.15GB) 降到两份 uint8 (2*144MB=288MB),
@@ -191,7 +191,7 @@ static void resize_bilinear(const float *src, int src_w, int src_h, int ch,
 
     for (int oy = 0; oy < OUT_SIZE; oy++) {
         const float h1r = oy * rh;
-        const int   h1  = (int)h1r;                        /* 截断 (正数=floor) / truncation (floor for positives) */
+        const int   h1  = (int)h1r;                        /* truncation (floor for positives) */
         const int   h1p = (h1 < src_h - 1) ? 1 : 0;
         const float h1l = h1r - h1;
         const float h0l = 1.0f - h1l;
@@ -344,7 +344,6 @@ static int merge_one(const char *io_dir, const char *out_dir, int n_patches,
     float *all = (float *)malloc((size_t)n_patches * C * ph * pw * sizeof(float));
     if (!all) return -1;
     for (int p = 0; p < n_patches; p++) {
-        /* qnn-net-run 输出: <io_dir>/Result_N/<tensor>.raw */
         /* qnn-net-run output: <io_dir>/Result_N/<tensor>.raw */
         snprintf(path, sizeof(path), "%s/Result_%d/%s.raw", io_dir, start_idx + p, tensor);
         FILE *f = fopen(path, "rb");
@@ -377,10 +376,10 @@ static int merge_one(const char *io_dir, const char *out_dir, int n_patches,
 
 /* Merge: HTP 输出 -> 6 个合并特征 raw
  * Merge: HTP outputs -> 6 merged feature raws
- * workDir: 工作目录 / work directory
- * peOutDir: patch_encoder 输出目录 (含 Result_0..34/)
+ * work directory
+ * )
  *           patch_encoder output directory (contains Result_0..34/)
- * ieOutDir: image_encoder 输出目录 (含 Result_0/)
+ * )
  *           image_encoder output directory (contains Result_0/)
  * 返回 0 成功, 非 0 失败
  * Returns 0 on success, non-zero on failure
@@ -412,9 +411,9 @@ int sharp_merge(const char *workDir, const char *peOutDir, const char *ieOutDir)
 /* Post: delta + disparity + image -> output.ply
  * workDir: 工作目录 (含 image.raw, disparity.raw, delta.raw)
  *          work directory (contains image.raw, disparity.raw, delta.raw)
- * fpx: 焦距像素值 / focal length in pixels
- * origW, origH: 原始图片宽高 / original image width and height
- * outPlyPath: 输出 PLY 文件路径 / output PLY file path
+ * focal length in pixels
+ * original image width and height
+ * output PLY file path
  * 返回 0 成功, 非 0 失败
  * Returns 0 on success, non-zero on failure
  */
@@ -434,9 +433,7 @@ int sharp_post(const char *workDir, float fpx, int origW, int origH, const char 
     float *delta = read_raw(path, DNP);
     if (!delta) { free(image); free(disparity); return -1; }
 
-    /* 尺寸校验: origW/origH 非法时直接失败 (后续 fpx/origW, fx=IMG/origW 要求正尺寸) */
-    /* Size check: fail on invalid origW/origH (the later fpx/origW and
-       fx=IMG/origW divisions require positive sizes) */
+    /* Size validation: fail if origW/origH is invalid (subsequent fpx/origW, fx=IMG/origW require positive dimensions) */
     if (origW <= 0 || origH <= 0) {
         CORE_LOGE("ERROR: invalid orig size %dx%d\n", origW, origH);
         free(image); free(disparity); free(delta);
@@ -522,7 +519,7 @@ int sharp_post(const char *workDir, float fpx, int origW, int origH, const char 
            与 torch unproject_gaussians 一致: T = inv(ndc4 @ intr4)[:3]
            consistent with torch unproject_gaussians: T = inv(ndc4 @ intr4)[:3]
            torch (predict.py:135-141) cx_orig=(orig_w-1)/2, cy_orig=(orig_h-1)/2,
-           缩放到内部分辨率: cx = cx_orig * IMG / orig_w (非整数, 与 torch 一致)
+           Scale to internal resolution: cx = cx_orig * IMG / orig_w (non-integer, consistent with torch)
            scaled to the internal resolution: cx = cx_orig * IMG / orig_w
            (non-integer, as in torch)
            ndc4@intr4 = [[2fx/W,0,2cx/W-1,0],[0,2fy/H,2cy/H-1,0],[0,0,1,0],[0,0,0,1]]
@@ -560,17 +557,12 @@ int sharp_post(const char *workDir, float fpx, int origW, int origH, const char 
 }
 
 /* ─────────────── sharp_prep_image ─────────────── */
-/* 预处理图片: 解码 JPEG/PNG -> EXIF 旋转/焦距 -> resize 1536 -> image.raw
- * Preprocess image: decode JPEG/PNG -> EXIF rotation/focal length -> resize 1536 -> image.raw
- * imagePath: 输入图片路径 / input image path
- * outRawPath: 输出 image.raw 路径 [1,3,1536,1536] NCHW f32 值域[0,1]
- *             output image.raw path [1,3,1536,1536] NCHW f32 in [0,1]
- * outFpx: 输出焦距像素值 / output focal length in pixels
- * outDfactor: 输出 disparity_factor = f_px / orig_w
- *             output disparity_factor = f_px / orig_w
- * outOrigW, outOrigH: 输出原始图片宽高 (EXIF 旋转后)
- *                     output original image size (after EXIF rotation)
- * 返回 0 成功, 非 0 失败
+/* Preprocess image: decode JPEG/PNG -> EXIF rotation/focal -> resize 1536 -> image.raw
+ * input image path
+ * outRawPath: output image.raw path [1,3,1536,1536] NCHW f32 in [0,1]
+ * outFpx: output focal length in pixels
+ * outDfactor: output disparity_factor = f_px / orig_w
+ * outOrigW, outOrigH: output original image size (after EXIF rotation)
  * Returns 0 on success, non-zero on failure
  */
 int sharp_prep_image(const char *imagePath, const char *outRawPath,

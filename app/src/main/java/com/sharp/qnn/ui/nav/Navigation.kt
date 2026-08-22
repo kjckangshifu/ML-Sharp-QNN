@@ -65,7 +65,6 @@ import com.sharp.qnn.ui.settings.SettingsScreen
 import com.sharp.qnn.ui.theme.SHARPQNNTheme
 import com.sharp.qnn.util.LocaleUtil
 
-/** 顶部导航项定义 */
 /** Top-level navigation destination definitions. */
 private sealed class Dest(
     val route: String,
@@ -80,11 +79,9 @@ private sealed class Dest(
 
 private val destinations = listOf(Dest.Home, Dest.Models, Dest.Settings)
 
-/** 中等屏幕宽度阈值: >=600dp 改用 NavigationRail (MD3 自适应导航) */
 /** Medium-screen width threshold: >=600dp switches to NavigationRail (MD3 adaptive navigation) */
 private const val RAIL_BREAKPOINT_DP = 600
 
-/** 内容区最大宽度 (Large 屏避免全宽拉伸) */
 /** Max content width (avoids full-width stretching on large screens) */
 private val CONTENT_MAX_WIDTH = 840.dp
 
@@ -92,7 +89,7 @@ private val CONTENT_MAX_WIDTH = 840.dp
  * 应用根 Composable: 主题 + Scaffold (CenterAlignedTopAppBar + 自适应导航) + NavHost。
  * App root composable: theme + Scaffold (CenterAlignedTopAppBar + adaptive nav) + NavHost.
  *
- * 含 3 个目的地: Home / Models / Settings。
+ * Models / Settings。
  * Contains three destinations: Home / Models / Settings.
  * Screen 组的 snackbarHostState 由顶层 Scaffold 持有 (消息统一浮于底部)。
  * The snackbarHostState is owned by the top-level Scaffold so all messages
@@ -104,7 +101,7 @@ fun SHARPApp() {
     val app = LocalContext.current.applicationContext as SHARPApplication
     val settings by app.settingsRepository.settingsFlow.collectAsState(initial = SettingsRepository.DEFAULTS)
 
-    // 按用户语言设置包装 Context, 覆盖 CompositionLocal 使其下所有 stringResource 跟随所选语言
+    // Wrap Context with user language, override CompositionLocal so all stringResource calls follow the selected language
     // Wrap the Context with the user language and override LocalContext so every
     // stringResource below follows the selected language
     val baseContext = LocalContext.current
@@ -123,18 +120,18 @@ fun SHARPApp() {
             val currentRoute = backStackEntry?.destination?.route
             val snackbarHostState = remember { SnackbarHostState() }
 
-            // 切换目的地时立即收起当前 Snackbar, 避免跨页残留
+            // Dismiss current Snackbar immediately on destination change to avoid cross-page residue
             // Dismiss the current snackbar on destination change so it never lingers across pages
             LaunchedEffect(currentRoute) {
                 snackbarHostState.currentSnackbarData?.dismiss()
             }
 
-            // 自适应: 宽屏 (>600dp) 用导航 rail, 手机用底部导航栏
+            // Adaptive: wide screen (>600dp) uses navigation rail, phone uses bottom nav bar
             // Adaptive: wide screens (>600dp) use a navigation rail, phones use a bottom bar
             val configuration = LocalConfiguration.current
             val useRail = configuration.screenWidthDp >= RAIL_BREAKPOINT_DP
 
-            // TopAppBar 标题跟随页面
+            // TopAppBar title follows the current page
             // TopAppBar title follows the current page
             val topBarTitle = when (currentRoute) {
                 Dest.Models.route -> stringResource(R.string.title_models)
@@ -142,9 +139,9 @@ fun SHARPApp() {
                 else -> stringResource(R.string.title_home)
             }
 
-            // 系统栏图标明暗与当前主题一致 (edge-to-edge 下图标浮于内容之上)
+            // System bar icon tint matches current theme (icons float above content in edge-to-edge)
             // Match status/navigation bar icon appearance to the theme (edge-to-edge floats icons over content)
-            // isAppearanceLightStatusBars = true 表示浅色(白色)图标, 适合深色背景
+            // isAppearanceLightStatusBars = true indicates light (white) icons for dark backgrounds
             // isAppearanceLightStatusBars = true means light (white) icons for dark backgrounds
             val darkTheme = isSystemInDarkTheme()
             val view = LocalView.current
@@ -180,7 +177,7 @@ fun SHARPApp() {
             containerColor = MaterialTheme.colorScheme.surface,
             snackbarHost = { SnackbarHost(snackbarHostState) },
             topBar = {
-                // MD3 CenterAlignedTopAppBar: 标题居中, 滚动时容器色从 surface 提升为 surfaceContainer
+                // MD3 CenterAlignedTopAppBar: centered title, container color elevates from surface to surfaceContainer on scroll
                 // MD3 CenterAlignedTopAppBar: centered title; container lifts from surface to surfaceContainer on scroll
                 CenterAlignedTopAppBar(
                     title = { Text(topBarTitle, style = MaterialTheme.typography.titleLarge) },
@@ -225,7 +222,7 @@ fun SHARPApp() {
                     }
                 }
 
-                // 内容区: 大屏限制最大宽度并居中 (MD3 反拉伸规范)
+                // Content area: large screens cap max width and center (MD3 anti-stretch spec)
                 // Content area: capped width, centered on large screens (MD3 anti-stretch spec)
                 Box(
                     modifier = Modifier.weight(1f).fillMaxHeight(),
@@ -238,7 +235,7 @@ fun SHARPApp() {
                             .widthIn(max = CONTENT_MAX_WIDTH)
                             .fillMaxSize()
                             .nestedScroll(scrollBehavior.nestedScrollConnection),
-                        // MD3 过渡动画: emphasized decelerate 入场, emphasized accelerate 出场
+                        // MD3 transition: emphasized decelerate enter, emphasized accelerate exit
                         // MD3 transitions: emphasized decelerate on enter, emphasized accelerate on exit
                         enterTransition = {
                             slideInHorizontally(initialOffsetX = { it / 4 }, animationSpec = tween(300)) +

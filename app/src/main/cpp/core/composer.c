@@ -21,7 +21,7 @@ static float inverse_softplus(float x)
     /* 数值稳定: log(exp(x) - 1) = x + log(1 - exp(-x)) */
     /* Numerically stable: log(exp(x) - 1) = x + log(1 - exp(-x)) */
     float ex = expf(-x);
-    if (ex > 0.5f)  /* x < ~0.69: 用 expm1 避免消减 / use expm1 to avoid cancellation */
+    if (ex > 0.5f)  /* use expm1 to avoid cancellation */
         return logf(expm1f(x));
     return x + logf(1.0f - ex);
 }
@@ -86,6 +86,10 @@ Gaussians3DFlat composer_run(
     out.quaternions     = (float*)malloc(4 * np * sizeof(float));
     out.colors          = (float*)malloc(3 * np * sizeof(float));
     out.opacities       = (float*)malloc(np * sizeof(float));
+
+    /* 预计算 global_scale 乘子，避免循环内条件分支 */
+    /* Precompute global_scale multiplier to avoid conditional branch inside loop */
+    float gs = (global_scale != 0.0f) ? global_scale : 1.0f;
 
     for (int l = 0; l < L; l++) {
         for (int y = 0; y < bh; y++) {
@@ -165,7 +169,7 @@ Gaussians3DFlat composer_run(
                 float qz = bq3 + params->delta_quat * d_qz;
 
                 /* 4. color: sigmoid(inverse_sigmoid(base) + df_color * delta) */
-                float bc_r_clp = bc_r;  /* 稍后 clamp / clamped below */
+                float bc_r_clp = bc_r;  /* clamped below */
                 float bc_g_clp = bc_g;
                 float bc_b_clp = bc_b;
                 if (params->color_activation == 0) { /* sigmoid */
@@ -192,12 +196,12 @@ Gaussians3DFlat composer_run(
                 int out_idx = idx_base;  /* 平铺后 B=1, [L,H,W,C] -> [L*H*W, C] */
                                          /* flat layout B=1: [L,H,W,C] -> [L*H*W, C] */
 
-                out.mean_vectors[0*np + out_idx] = mean_x;
-                out.mean_vectors[1*np + out_idx] = mean_y;
-                out.mean_vectors[2*np + out_idx] = mean_z;
-                out.singular_values[0*np + out_idx] = sv_x;
-                out.singular_values[1*np + out_idx] = sv_y;
-                out.singular_values[2*np + out_idx] = sv_z;
+                out.mean_vectors[0*np + out_idx] = mean_x * gs;
+                out.mean_vectors[1*np + out_idx] = mean_y * gs;
+                out.mean_vectors[2*np + out_idx] = mean_z * gs;
+                out.singular_values[0*np + out_idx] = sv_x * gs;
+                out.singular_values[1*np + out_idx] = sv_y * gs;
+                out.singular_values[2*np + out_idx] = sv_z * gs;
                 out.quaternions[0*np + out_idx] = qw;
                 out.quaternions[1*np + out_idx] = qx;
                 out.quaternions[2*np + out_idx] = qy;
@@ -206,16 +210,6 @@ Gaussians3DFlat composer_run(
                 out.colors[1*np + out_idx] = col_g;
                 out.colors[2*np + out_idx] = col_b;
                 out.opacities[out_idx] = op;
-
-                /* global_scale: mean *= gs, singular_values *= gs */
-                if (global_scale != 0.0f) {
-                    out.mean_vectors[0*np + out_idx] *= global_scale;
-                    out.mean_vectors[1*np + out_idx] *= global_scale;
-                    out.mean_vectors[2*np + out_idx] *= global_scale;
-                    out.singular_values[0*np + out_idx] *= global_scale;
-                    out.singular_values[1*np + out_idx] *= global_scale;
-                    out.singular_values[2*np + out_idx] *= global_scale;
-                }
             }
         }
     }

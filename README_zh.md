@@ -4,7 +4,7 @@
 
 # SHARP QNN
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![License: GPL 3.0](https://img.shields.io/badge/License-GPL%203.0-blue.svg)](LICENSE)
 [![Android](https://img.shields.io/badge/Android-12%2B-green)](https://developer.android.com)
 [![Platform](https://img.shields.io/badge/Platform-Snapdragon-blue)](https://www.qualcomm.com)
 
@@ -73,11 +73,11 @@
 
 ### 硬件
 
-- 搭载 Hexagon DSP 的骁龙设备（骁龙 8 Gen 1 或更新）
+- 搭载 Hexagon DSP 的骁龙设备（骁龙 8 Gen 2 或更新）
 - Android 12+ (API 31+)
 - ARM64-v8a 架构
 
-> **注意**: 目前仅在 HTP v79（如骁龙 8 Elite）设备上测试通过，不保证其他 HTP 版本（v68/v69/v73/v75/v81）的设备能完美运行。
+> **注意**: 适用于骁龙 8 Gen 2 及以上（HTP v73+），已在 HTP v79（骁龙 8 Elite）上测试通过。
 
 ### 软件
 
@@ -256,17 +256,21 @@ output/
 | stb_image v2.30 | Public Domain | JPEG/PNG 解码 |
 | Qualcomm QNN SDK | Proprietary | HTP DSP 推理 |
 | Apple SHARP | AML-R | 原始研究代码 |
+| [GaussSimplify](https://github.com/3dgscloud/GaussSimplify) | GPL 3.0 | 3D 高斯简化 |
+| [GaussForge](https://github.com/3dgscloud/GaussForge) | Apache 2.0 | 高斯泼溅 I/O 数据类型 |
 
 ---
 
 ## 许可
 
-本项目采用 **MIT 许可证** — 详见 [LICENSE](LICENSE)。
+本项目采用 **GNU General Public License v3.0** — 详见 [LICENSE](LICENSE)。
 
 第三方组件：
 - `stb_image.h` — Public Domain (Sean Barrett)
 - Apple SHARP — [AML-R](https://github.com/apple/ml-sharp/blob/main/LICENSE)
 - Qualcomm QNN SDK — 专有许可（不随本项目分发）
+- GaussSimplify — [GPL 3.0](https://github.com/3dgscloud/GaussSimplify/blob/main/LICENSE)
+- GaussForge — [Apache 2.0](https://github.com/3dgscloud/GaussForge/blob/main/LICENSE)
 
 ---
 
@@ -275,6 +279,8 @@ output/
 - [Apple SHARP](https://github.com/apple/ml-sharp) — 原始研究与代码
 - [stb](https://github.com/nothings/stb) — Sean Barrett 的单文件公共领域库
 - [Qualcomm AI Engine Direct SDK](https://www.qualcomm.com/developer/software/qualcomm-ai-engine-direct-sdk) — QNN HTP 运行时
+- [GaussSimplify](https://github.com/3dgscloud/GaussSimplify) — 3D 高斯简化库
+- [GaussForge](https://github.com/3dgscloud/GaussForge) — 高斯泼溅 I/O 库
 
 ---
 

@@ -19,11 +19,9 @@ void unproject_simple(const Gaussians3DFlat *g, Gaussians3DFlat *out,
        ndc4 = [[2/W,0,-1,0],[0,2/H,-1,0],[0,0,1,0],[0,0,0,1]]
        intr4 = [[fx,0,cx,0],[0,fy,cy,0],[0,0,1,0],[0,0,0,1]]
        ndc4@intr4 = [[2fx/W,0,2cx/W-1,0],[0,2fy/H,2cy/H-1,0],[0,0,1,0],[0,0,0,1]]
-       求逆(3x3 部分): [[W/2fx, 0, (1-2cx/W)W/2fx],[0, H/2fy, (1-2cy/H)H/2fy],[0,0,1]]
        Inverse (3x3 part): [[W/2fx, 0, (1-2cx/W)W/2fx],[0, H/2fy, (1-2cy/H)H/2fy],[0,0,1]]
        mean_metric = mean @ T[:3,:3].T + T[:,3]
                   x' = x*W/(2fx) + z*tx,  y' = y*H/(2fy) + z*ty,  z' = z
-       (extrinsics=identity 时 T[:,3]=0)
        (T[:,3]=0 when extrinsics are identity) */
     float inv_2f_W = (float)img_w / (2.0f * f_px_x);
     float inv_2f_H = (float)img_h / (2.0f * f_px_y);

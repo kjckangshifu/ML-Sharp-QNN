@@ -4,8 +4,8 @@
  *
  * PyTorch 参考 (spn_encoder.py:341-369):
  * PyTorch reference (spn_encoder.py:341-369):
- *   for j in range(steps):  # 外循环 = 行 / outer loop = rows
- *     for i in range(steps):  # 内循环 = 列 / inner loop = cols
+ *   outer loop = rows
+ *     inner loop = cols
  *       patch = patches[idx]
  *       crop top    if j != 0       => padding
  *       crop left   if i != 0       => padding

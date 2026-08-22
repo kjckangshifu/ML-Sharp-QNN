@@ -12,7 +12,7 @@ import com.sharp.qnn.ui.nav.SHARPApp
  * Jetpack Compose (MD3).
  *
  * 日志记录由 [com.sharp.qnn.service.LogRecorderService] 承载, 不依赖
- * Activity 生命周期, 切后台/Activity 被回收时仍持续记录。
+ * Activity 被回收时仍持续记录。
  * Log recording is hosted by [com.sharp.qnn.service.LogRecorderService] and does
  * not depend on the Activity lifecycle; it keeps running in the background /
  * when the Activity is reclaimed.

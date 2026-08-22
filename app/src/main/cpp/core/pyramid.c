@@ -8,7 +8,7 @@
  * 坐标映射 (align_corners=False):
  * Coordinate mapping (align_corners=False):
  *   src_x = (dst_x + 0.5) * scale_inv - 0.5
- *   其中 scale_inv = H / h_out
+ *   h_out
  *   where scale_inv = H / h_out
  *
  * 对 x1 (scale_factor=0.5):  scale_inv = 2.0

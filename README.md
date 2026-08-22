@@ -4,7 +4,7 @@
 
 # SHARP QNN
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![License: GPL 3.0](https://img.shields.io/badge/License-GPL%203.0-blue.svg)](LICENSE)
 [![Android](https://img.shields.io/badge/Android-12%2B-green)](https://developer.android.com)
 [![Platform](https://img.shields.io/badge/Platform-Snapdragon-blue)](https://www.qualcomm.com)
 
@@ -73,11 +73,11 @@
 
 ### Hardware
 
-- Snapdragon device with Hexagon DSP (SD 8 Gen 1 or newer)
+- Snapdragon device with Hexagon DSP (SD 8 Gen 2 or newer)
 - Android 12+ (API 31+)
 - ARM64-v8a architecture
 
-> **Note**: Only tested on HTP v79 devices (e.g. Snapdragon 8 Elite). Other HTP versions (v68/v69/v73/v75/v81) are not guaranteed to work perfectly.
+> **Note**: For Snapdragon 8 Gen 2 and above (HTP v73+). Tested on HTP v79 (Snapdragon 8 Elite).
 
 ### Software
 
@@ -256,17 +256,21 @@ Upload the `dlc/w8a16/` files to HuggingFace for distribution.
 | stb_image v2.30 | Public Domain | JPEG/PNG decoding |
 | Qualcomm QNN SDK | Proprietary | HTP DSP inference |
 | Apple SHARP | AML-R | Original research codebase |
+| [GaussSimplify](https://github.com/3dgscloud/GaussSimplify) | GPL 3.0 | 3D Gaussian simplification |
+| [GaussForge](https://github.com/3dgscloud/GaussForge) | Apache 2.0 | Gaussian Splat I/O data types |
 
 ---
 
 ## License
 
-This project is licensed under the **MIT License** — see [LICENSE](LICENSE) for details.
+This project is licensed under the **GNU General Public License v3.0** — see [LICENSE](LICENSE) for details.
 
 Third-party components:
 - `stb_image.h` — Public Domain (Sean Barrett)
 - Apple SHARP — [AML-R](https://github.com/apple/ml-sharp/blob/main/LICENSE)
 - Qualcomm QNN SDK — Proprietary (not distributed with this project)
+- GaussSimplify — [GPL 3.0](https://github.com/3dgscloud/GaussSimplify/blob/main/LICENSE)
+- GaussForge — [Apache 2.0](https://github.com/3dgscloud/GaussForge/blob/main/LICENSE)
 
 ---
 
@@ -275,6 +279,8 @@ Third-party components:
 - [Apple SHARP](https://github.com/apple/ml-sharp) — the original research and codebase
 - [stb](https://github.com/nothings/stb) — public domain single-file libraries by Sean Barrett
 - [Qualcomm AI Engine Direct SDK](https://www.qualcomm.com/developer/software/qualcomm-ai-engine-direct-sdk) — QNN HTP runtime
+- [GaussSimplify](https://github.com/3dgscloud/GaussSimplify) — 3D Gaussian simplification library
+- [GaussForge](https://github.com/3dgscloud/GaussForge) — Gaussian Splat I/O library
 
 ---
 

@@ -10,13 +10,13 @@ import androidx.compose.ui.unit.sp
  * MD3 完整字体规格 (使用系统默认字体族)。
  * Full MD3 type scale (using the system default font family).
  *
- * 覆盖全部 MD3 type scale: Display / Headline / Title / Body / Label,
- * 每级各含 Large / Medium / Small 三个尺寸。
+ * Headline / Title / Body / Label,
+ * Medium / Small 三个尺寸。
  * Covers every MD3 type scale — Display / Headline / Title / Body / Label —
  * each with Large / Medium / Small sizes.
  */
 val Typography = Typography(
-    // ====== Display (英雄文本、大数字) ======
+    // ======  ======
     // ====== Display (hero text, large numbers) ======
     displayLarge = TextStyle(
         fontFamily = FontFamily.Default,
@@ -38,7 +38,7 @@ val Typography = Typography(
         lineHeight = 44.sp
     ),
 
-    // ====== Headline (区块标题) ======
+    // ======  ======
     // ====== Headline (section titles) ======
     headlineLarge = TextStyle(
         fontFamily = FontFamily.Default,
@@ -60,7 +60,7 @@ val Typography = Typography(
         lineHeight = 32.sp
     ),
 
-    // ====== Title (小标题、卡片标题) ======
+    // ======  ======
     // ====== Title (subtitles, card titles) ======
     titleLarge = TextStyle(
         fontFamily = FontFamily.Default,
@@ -83,7 +83,7 @@ val Typography = Typography(
         letterSpacing = 0.1.sp
     ),
 
-    // ====== Body (正文、描述) ======
+    // ======  ======
     // ====== Body (prose, descriptions) ======
     bodyLarge = TextStyle(
         fontFamily = FontFamily.Default,
@@ -107,7 +107,7 @@ val Typography = Typography(
         letterSpacing = 0.4.sp
     ),
 
-    // ====== Label (按钮、Chip、说明文字) ======
+    // ======  ======
     // ====== Label (buttons, chips, captions) ======
     labelLarge = TextStyle(
         fontFamily = FontFamily.Default,

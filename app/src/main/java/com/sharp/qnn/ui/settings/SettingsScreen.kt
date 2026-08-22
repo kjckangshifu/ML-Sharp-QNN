@@ -1,55 +1,84 @@
 package com.sharp.qnn.ui.settings
 
 import android.app.Application
-import android.content.Intent
-import android.net.Uri
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
+import android.os.Environment
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.CleaningServices
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.SelectAll
+import androidx.compose.material3.BasicAlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.RangeSlider
 import androidx.compose.material3.Slider
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -64,8 +93,10 @@ import com.sharp.qnn.util.FileUtil.formatFileSize
 import com.sharp.qnn.util.MsgKey
 import com.sharp.qnn.util.i18nMessage
 import com.sharp.qnn.ui.theme.Spacing
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.File
 import kotlin.math.roundToInt
 
@@ -86,19 +117,16 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch { sharpApp.settingsRepository.setShowImageDetails(show) }
     }
 
-    /** 界面语言 (运行时生效, 无需重启) */
     /** UI language (applies at runtime, no restart needed). */
     fun setLanguage(language: Language) {
         viewModelScope.launch { sharpApp.settingsRepository.setLanguage(language) }
     }
 
-    /** 模型下载源 (HG=官方, HM=国内镜像) */
     /** Model download source (HG=official, HM=mirror for China). */
     fun setDownloadSource(source: DownloadSource) {
         viewModelScope.launch { sharpApp.settingsRepository.setDownloadSource(source) }
     }
 
-    /** 日志记录开关: 开启启动前台记录服务, 关闭停止 */
     /** Log recording toggle: starts the foreground recording service, or stops it. */
     fun setLogRecording(enable: Boolean) {
         viewModelScope.launch {
@@ -108,8 +136,7 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    /** 动态色彩开关 (Android 12+ 生效) */
-    /** Dynamic color toggle (effective on Android 12+). */
+    /** System theme color toggle (effective on Android 12+). */
     fun setDynamicColor(enable: Boolean) {
         viewModelScope.launch { sharpApp.settingsRepository.setDynamicColor(enable) }
     }
@@ -120,7 +147,6 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch { sharpApp.settingsRepository.setPerfType(type) }
     }
 
-    /** 锁角模式的电压角 */
     /** Voltage corner for locked mode. */
     fun setPerfLockedCorner(corner: Int) {
         viewModelScope.launch { sharpApp.settingsRepository.setPerfLockedCorner(corner) }
@@ -151,7 +177,6 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
         return Triple(m, t, x)
     }
 
-    /** 自动调角最小角 (联动 target/max 保持不变量) */
     /** Auto-range min corner (keeps the invariant with target/max). */
     fun setPerfRangeMin(corner: Int) {
         viewModelScope.launch {
@@ -164,7 +189,6 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    /** 自动调角目标角 (限制在 (min, max] 内, 联动 max 保持不变量) */
     /** Auto-range target corner (clamped to (min, max]; keeps the invariant with max). */
     fun setPerfRangeTarget(corner: Int) {
         viewModelScope.launch {
@@ -176,7 +200,6 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    /** 自动调角最大角 (联动 min/target 保持不变量) */
     /** Auto-range max corner (keeps the invariant with min/target). */
     fun setPerfRangeMax(corner: Int) {
         viewModelScope.launch {
@@ -189,19 +212,48 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    /** 自动调角的 DCVS 调节模式 */
     /** DCVS adjustment mode for auto-range. */
     fun setPerfDcvsMode(mode: Int) {
         viewModelScope.launch { sharpApp.settingsRepository.setPerfDcvsMode(mode) }
     }
 
-    /** 文件管理器操作后重新扫描目录对齐槽位 */
+    fun setPlyOptimize(enable: Boolean) {
+        viewModelScope.launch { sharpApp.settingsRepository.setPlyOptimize(enable) }
+    }
+
+    fun setPlyMergeK(k: Int) {
+        viewModelScope.launch { sharpApp.settingsRepository.setPlyMergeK(k) }
+    }
+
+    fun setPlyMergeRatio(ratio: Double) {
+        viewModelScope.launch { sharpApp.settingsRepository.setPlyMergeRatio(ratio) }
+    }
+
+    fun setPlyPruneThreshold(threshold: Double) {
+        viewModelScope.launch { sharpApp.settingsRepository.setPlyPruneThreshold(threshold) }
+    }
+
+    fun setPlySorNeighbors(n: Int) {
+        viewModelScope.launch { sharpApp.settingsRepository.setPlySorNeighbors(n) }
+    }
+
+    fun setPlySorStdRatio(ratio: Double) {
+        viewModelScope.launch { sharpApp.settingsRepository.setPlySorStdRatio(ratio) }
+    }
+
+    fun setPlyMergeCap(cap: Double) {
+        viewModelScope.launch { sharpApp.settingsRepository.setPlyMergeCap(cap) }
+    }
+
+    fun setImageDirectories(dirs: Set<String>) {
+        viewModelScope.launch { sharpApp.settingsRepository.setImageDirectories(dirs) }
+    }
+
     /** Re-scans the directory after file manager actions to realign slots. */
     fun scanModels() {
         viewModelScope.launch { sharpApp.modelStore.scanModelDirectory() }
     }
 
-    /** 模型根目录 (sharp_models) */
     /** Model root directory (sharp_models). */
     fun modelRootDir(): File = sharpApp.modelStore.modelRootDir()
 
@@ -215,34 +267,13 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
 
 @Composable
 fun SettingsScreen(vm: SettingsViewModel = viewModel()) {
-    val context = LocalContext.current
     val settings by vm.settingsFlow.collectAsState(initial = SettingsRepository.DEFAULTS)
 
-    // 模型文件管理器弹窗开关
     // Model file manager dialog toggle
     var showModelManager by remember { mutableStateOf(false) }
 
-    // PLY 目录选择器
-    // PLY directory picker
-    val plyDirPicker = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.OpenDocumentTree()
-    ) { uri: Uri? ->
-        if (uri != null) {
-            val granted = runCatching {
-                context.contentResolver.takePersistableUriPermission(
-                    uri,
-                    Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
-                )
-                android.util.Log.i("SharpQnn", "PLY persist grant OK: $uri")
-                true
-            }.getOrDefault(false)
-            if (granted) {
-                // 持久化保存 tree Uri 本身, 导出时经 contentResolver 写入 (SAF)
-                // Persist the tree Uri; exports write through the contentResolver (SAF)
-                vm.setPlySaveLocation(uri.toString())
-            }
-        }
-    }
+    // PLY directory picker dialog
+    var showPlyPicker by remember { mutableStateOf(false) }
 
     var cacheMessage by remember { mutableStateOf<String?>(null) }
 
@@ -250,8 +281,7 @@ fun SettingsScreen(vm: SettingsViewModel = viewModel()) {
         modifier = Modifier.fillMaxSize().padding(Spacing.lg),
         verticalArrangement = Arrangement.spacedBy(Spacing.md)
     ) {
-        // ====== 界面语言 ======
-        // ====== UI language ======
+                // ====== UI language ======
         item {
             Card(
                 colors = CardDefaults.cardColors(
@@ -274,8 +304,7 @@ fun SettingsScreen(vm: SettingsViewModel = viewModel()) {
             }
         }
 
-        // ====== 模型下载源 ======
-        // ====== Model download source ======
+                // ====== Model download source ======
         item {
             Card(
                 colors = CardDefaults.cardColors(
@@ -298,8 +327,7 @@ fun SettingsScreen(vm: SettingsViewModel = viewModel()) {
             }
         }
 
-        // ====== 模型文件管理器 ======
-        // ====== Model file manager ======
+                // ====== Model file manager ======
         item {
             Card(
                 colors = CardDefaults.cardColors(
@@ -323,7 +351,7 @@ fun SettingsScreen(vm: SettingsViewModel = viewModel()) {
             }
         }
 
-        // ====== PLY 保存位置 ======
+        // ====== PLY Save Location ======
         // ====== PLY save location ======
         item {
             Card(
@@ -342,7 +370,7 @@ fun SettingsScreen(vm: SettingsViewModel = viewModel()) {
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
-                    FilledTonalButton(onClick = { plyDirPicker.launch(null) }) {
+                    FilledTonalButton(onClick = { showPlyPicker = true }) {
                         Icon(Icons.Filled.Folder, contentDescription = null, modifier = Modifier.size(18.dp))
                         Spacer(Modifier.size(Spacing.sm))
                         Text(stringResource(R.string.settings_choose_dir))
@@ -351,8 +379,7 @@ fun SettingsScreen(vm: SettingsViewModel = viewModel()) {
             }
         }
 
-        // ====== 图片详细信息 ======
-        // ====== Image details ======
+                // ====== Image details ======
         item {
             SwitchSettingRow(
                 title = stringResource(R.string.settings_image_details),
@@ -362,7 +389,56 @@ fun SettingsScreen(vm: SettingsViewModel = viewModel()) {
             )
         }
 
-        // ====== HTP 性能调度 ======
+                // ====== Image directory filter ======
+        item {
+            ImageDirPanel(
+                dirs = settings.imageDirectories,
+                onDirsChange = { vm.setImageDirectories(it) }
+            )
+        }
+
+        // ====== PLY Optimization ======
+        // ====== PLY optimization ======
+        item {
+            SwitchSettingRow(
+                title = stringResource(R.string.settings_ply_optimize),
+                description = stringResource(R.string.settings_ply_optimize_desc),
+                checked = settings.plyOptimize,
+                onCheckedChange = { vm.setPlyOptimize(it) }
+            )
+        }
+        item {
+            AnimatedVisibility(
+                visible = settings.plyOptimize,
+                enter = fadeIn(spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMedium)) +
+                    expandVertically(spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMedium)),
+                exit = fadeOut(spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMedium)) +
+                    shrinkVertically(spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMedium))
+            ) {
+                Column(verticalArrangement = Arrangement.spacedBy(Spacing.md)) {
+                    PlyPrunePanel(
+                        threshold = settings.plyPruneThreshold.toFloat(),
+                        onThresholdChange = { vm.setPlyPruneThreshold(it.toDouble()) }
+                    )
+                    PlySorPanel(
+                        neighbors = settings.plySorNeighbors,
+                        stdRatio = settings.plySorStdRatio.toFloat(),
+                        onNeighborsChange = { vm.setPlySorNeighbors(it) },
+                        onStdRatioChange = { vm.setPlySorStdRatio(it.toDouble()) }
+                    )
+                    PlyMergePanel(
+                        mergeK = settings.plyMergeK,
+                        mergeRatio = settings.plyMergeRatio.toFloat(),
+                        mergeCap = settings.plyMergeCap.toFloat(),
+                        onMergeKChange = { vm.setPlyMergeK(it) },
+                        onMergeRatioChange = { vm.setPlyMergeRatio(it.toDouble()) },
+                        onMergeCapChange = { vm.setPlyMergeCap(it.toDouble()) }
+                    )
+                }
+            }
+        }
+
+        // ====== HTP Performance ======
         // ====== HTP performance scheduling ======
         item {
             Card(
@@ -382,7 +458,7 @@ fun SettingsScreen(vm: SettingsViewModel = viewModel()) {
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     val haptic = LocalHapticFeedback.current
-                    // ----- 锁角模式 (默认) -----
+
                     // ----- Locked corner mode (default) -----
                     Row(
                         modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
@@ -410,7 +486,7 @@ fun SettingsScreen(vm: SettingsViewModel = viewModel()) {
                             onChange = { vm.setPerfLockedCorner(it) }
                         )
                     }
-                    // ----- 自动调角模式 -----
+
                     // ----- Auto-range mode -----
                     Row(
                         modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
@@ -448,8 +524,7 @@ fun SettingsScreen(vm: SettingsViewModel = viewModel()) {
             }
         }
 
-        // ====== 动态色彩 ======
-        // ====== Dynamic color ======
+                // ====== System theme color ======
         item {
             SwitchSettingRow(
                 title = stringResource(R.string.settings_dynamic_color),
@@ -459,8 +534,7 @@ fun SettingsScreen(vm: SettingsViewModel = viewModel()) {
             )
         }
 
-        // ====== 日志记录 ======
-        // ====== Log recording ======
+                // ====== Log recording ======
         item {
             SwitchSettingRow(
                 title = stringResource(R.string.settings_logging),
@@ -470,8 +544,7 @@ fun SettingsScreen(vm: SettingsViewModel = viewModel()) {
             )
         }
 
-        // ====== 清除缓存 ======
-        // ====== Clear cache ======
+                // ====== Clear cache ======
         item {
             Card(
                 colors = CardDefaults.cardColors(
@@ -506,7 +579,6 @@ fun SettingsScreen(vm: SettingsViewModel = viewModel()) {
         }
     }
 
-    // 模型文件管理器弹窗 (独立窗口, 置于 LazyColumn 外)
     // Model file manager dialog (standalone window, outside the LazyColumn)
     if (showModelManager) {
         ModelFileManagerDialog(
@@ -515,9 +587,20 @@ fun SettingsScreen(vm: SettingsViewModel = viewModel()) {
             onDeleted = { vm.scanModels() }
         )
     }
+
+    // PLY save directory picker (unified BasicAlertDialog style)
+    if (showPlyPicker) {
+        PlyDirPickerDialog(
+            initialPath = settings.plySaveLocation,
+            onSelected = {
+                vm.setPlySaveLocation(it)
+                showPlyPicker = false
+            },
+            onDismiss = { showPlyPicker = false }
+        )
+    }
 }
 
-/** 电压角列表中的下一档 (更高电压); 已是最高档返回 null */
 /** Next step up the voltage corner list (higher voltage); null at the top. */
 private fun higherCorner(corner: Int): Int? {
     val idx = SettingsRepository.VoltageCorner.ALL.indexOf(corner)
@@ -525,7 +608,6 @@ private fun higherCorner(corner: Int): Int? {
     return SettingsRepository.VoltageCorner.ALL[idx + 1]
 }
 
-/** 电压角列表中的上一档 (更低电压); 已是最低档返回 null */
 /** Previous step down the voltage corner list (lower voltage); null at the bottom. */
 private fun lowerCorner(corner: Int): Int? {
     val idx = SettingsRepository.VoltageCorner.ALL.indexOf(corner)
@@ -533,7 +615,6 @@ private fun lowerCorner(corner: Int): Int? {
     return SettingsRepository.VoltageCorner.ALL[idx - 1]
 }
 
-/** 电压角在列表中的下标 (用于 Slider 离散映射) */
 /** Index of a corner in the list (for discrete slider mapping). */
 private fun idxOfCorner(corner: Int): Int {
     val idx = SettingsRepository.VoltageCorner.ALL.indexOf(corner)
@@ -561,7 +642,6 @@ private fun PerfSubPanel(
     ) { content() }
 }
 
-/** 离散电压角 Slider (13 档, MIN~MAX) */
 /** Discrete voltage corner slider (13 steps, MIN~MAX). */
 @Composable
 private fun LockedCornerPanel(
@@ -581,7 +661,7 @@ private fun LockedCornerPanel(
         ) {
             Text(stringResource(R.string.settings_corner_step), style = MaterialTheme.typography.labelLarge, modifier = Modifier.weight(1f))
             Text(
-                text = SettingsRepository.VoltageCorner.name(corners[draft]),
+                text = stringResource(SettingsRepository.VoltageCorner.nameResId(corners[draft])),
                 style = MaterialTheme.typography.titleSmall,
                 color = MaterialTheme.colorScheme.primary,
                 fontWeight = FontWeight.SemiBold
@@ -593,7 +673,6 @@ private fun LockedCornerPanel(
                 val newIdx = raw.roundToInt()
                 if (newIdx != draft) {
                     draft = newIdx
-                    // 每跳过一档触发一次轻触觉反馈 (M3 离散 Slider 规范)
                     // Haptic tick per step skipped (M3 discrete slider spec)
                     haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                 }
@@ -625,7 +704,6 @@ private fun LockedCornerPanel(
     }
 }
 
-/** 自动调角面板: 区间 RangeSlider + 目标角 Slider + DCVS 策略 FilterChip */
 /** Auto-range panel: RangeSlider for the interval + target slider + DCVS FilterChips. */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -647,7 +725,6 @@ private fun RangePanel(
     var targetDraft by remember { mutableStateOf(idxOfCorner(targetCorner).toFloat()) }
     val haptic = LocalHapticFeedback.current
 
-    // 外部持久值变化 (如切换模式后恢复) 时同步本地草稿
     // Sync the local drafts when external persisted values change (e.g. after switching modes)
     LaunchedEffect(minCorner, maxCorner, targetCorner) {
         rangeDraft = idxOfCorner(minCorner).toFloat()..idxOfCorner(maxCorner).toFloat()
@@ -659,7 +736,6 @@ private fun RangePanel(
         RangeSlider(
             value = rangeDraft,
             onValueChange = { raw ->
-                // 任一端跳过档位时触发轻触觉反馈
                 // Haptic tick whenever either handle skips a step
                 if (raw.start.roundToInt() != rangeDraft.start.roundToInt() ||
                     raw.endInclusive.roundToInt() != rangeDraft.endInclusive.roundToInt()
@@ -671,7 +747,6 @@ private fun RangePanel(
             onValueChangeFinished = {
                 var lo = rangeDraft.start.roundToInt()
                 var hi = rangeDraft.endInclusive.roundToInt()
-                // 保证 min != max: 两端重叠时推开一格
                 // Enforce min != max: push a handle apart when they overlap
                 if (lo == hi) {
                     if (lo >= maxIdx) lo-- else hi++
@@ -685,13 +760,13 @@ private fun RangePanel(
         )
         Row(modifier = Modifier.fillMaxWidth()) {
             Text(
-                text = stringResource(R.string.settings_min, SettingsRepository.VoltageCorner.name(corners[rangeDraft.start.roundToInt()])),
+                text = stringResource(R.string.settings_min, stringResource(SettingsRepository.VoltageCorner.nameResId(corners[rangeDraft.start.roundToInt()]))),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.weight(1f)
             )
             Text(
-                text = stringResource(R.string.settings_max, SettingsRepository.VoltageCorner.name(corners[rangeDraft.endInclusive.roundToInt()])),
+                text = stringResource(R.string.settings_max, stringResource(SettingsRepository.VoltageCorner.nameResId(corners[rangeDraft.endInclusive.roundToInt()]))),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -703,7 +778,7 @@ private fun RangePanel(
         ) {
             Text(stringResource(R.string.settings_target_corner), style = MaterialTheme.typography.labelLarge, modifier = Modifier.weight(1f))
             Text(
-                text = SettingsRepository.VoltageCorner.name(corners[targetDraft.roundToInt()]),
+                text = stringResource(SettingsRepository.VoltageCorner.nameResId(corners[targetDraft.roundToInt()])),
                 style = MaterialTheme.typography.titleSmall,
                 color = MaterialTheme.colorScheme.primary,
                 fontWeight = FontWeight.SemiBold
@@ -719,7 +794,6 @@ private fun RangePanel(
                 targetDraft = raw
             },
             onValueChangeFinished = { onTargetChange(corners[targetDraft.roundToInt()]) },
-            // 跟随草稿区间: 范围拖动与目标角拖动互不越界 (持久值尚未提交)
             // Track the draft interval so the range and target sliders never cross (persisted values not yet committed)
             valueRange = rangeDraft.start..rangeDraft.endInclusive,
             steps = (rangeDraft.endInclusive - rangeDraft.start).toInt().coerceAtLeast(0),
@@ -777,7 +851,6 @@ private fun dcvsModeHint(mode: Int): String = when (mode) {
     else -> stringResource(R.string.settings_dcvs_unknown, "0x%02X".format(mode))
 }
 
-/** 语言选择: 跟随系统 / 中文 / English (FilterChip 行) */
 /** Language picker: System / Chinese / English (FilterChip row). */
 @Composable
 private fun LanguagePanel(
@@ -803,7 +876,7 @@ private fun LanguagePanel(
 }
 
 /**
- * 模型下载源选择面板 (HG 官方 / HM 国内镜像)。
+ * HM 国内镜像)。
  * Model download source selection panel (HG official / HM mirror for China).
  *
  * 中国用户可选择 HM 镜像站 (hf-mirror.com) 获得更快的下载速度。
@@ -878,5 +951,767 @@ private fun SwitchSettingRow(
                 onCheckedChange = onCheckedChange
             )
         }
+    }
+}
+
+/**
+ * Opacity Pruning 子面板: 剔除低透明度的高斯点。
+ * Opacity Pruning sub-panel: removes low-opacity Gaussians.
+ */
+@Composable
+private fun PlyPrunePanel(
+    threshold: Float,
+    onThresholdChange: (Float) -> Unit
+) {
+    Card(
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceContainerLow
+        ),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(
+            modifier = Modifier.padding(Spacing.lg).fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            Text(
+                stringResource(R.string.settings_ply_prune),
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold
+            )
+            Text(
+                stringResource(R.string.settings_ply_prune_desc),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    stringResource(R.string.settings_ply_prune_threshold),
+                    style = MaterialTheme.typography.labelLarge,
+                    modifier = Modifier.weight(1f)
+                )
+                Text(
+                    text = String.format("%.2f", threshold),
+                    style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.primary,
+                    fontWeight = FontWeight.SemiBold
+                )
+            }
+            Slider(
+                value = threshold,
+                onValueChange = onThresholdChange,
+                valueRange = 0f..0.5f,
+                modifier = Modifier.fillMaxWidth()
+            )
+            Row(modifier = Modifier.fillMaxWidth()) {
+                Text("0.0", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Spacer(Modifier.weight(1f))
+                Text("0.5", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+    }
+}
+
+/**
+ * SOR (Statistical Outlier Removal) 子面板: 剔除空间孤立的漂浮点。
+ * SOR sub-panel: removes spatially isolated floaters.
+ */
+@Composable
+private fun PlySorPanel(
+    neighbors: Int,
+    stdRatio: Float,
+    onNeighborsChange: (Int) -> Unit,
+    onStdRatioChange: (Float) -> Unit
+) {
+    val haptic = LocalHapticFeedback.current
+    var draftNb by remember(neighbors) { mutableStateOf(neighbors.toFloat()) }
+    LaunchedEffect(neighbors) { draftNb = neighbors.toFloat() }
+
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(
+            modifier = Modifier.padding(Spacing.lg).fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            Text(
+                stringResource(R.string.settings_ply_sor),
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold
+            )
+            Text(
+                stringResource(R.string.settings_ply_sor_desc),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            // Neighbors
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    stringResource(R.string.settings_ply_sor_nb),
+                    style = MaterialTheme.typography.labelLarge,
+                    modifier = Modifier.weight(1f)
+                )
+                Text(
+                    text = if (neighbors == 0) stringResource(R.string.settings_off) else neighbors.toString(),
+                    style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.primary,
+                    fontWeight = FontWeight.SemiBold
+                )
+            }
+            Slider(
+                value = draftNb,
+                onValueChange = { raw ->
+                    val newVal = raw.roundToInt()
+                    if (newVal != draftNb.roundToInt()) {
+                        draftNb = raw
+                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                    }
+                },
+                onValueChangeFinished = { onNeighborsChange(draftNb.roundToInt()) },
+                valueRange = 0f..40f,
+                steps = 19,
+                modifier = Modifier.fillMaxWidth()
+            )
+            Row(modifier = Modifier.fillMaxWidth()) {
+                Text("0", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Spacer(Modifier.weight(1f))
+                Text("40", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            // Std Ratio
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    stringResource(R.string.settings_ply_sor_std),
+                    style = MaterialTheme.typography.labelLarge,
+                    modifier = Modifier.weight(1f)
+                )
+                Text(
+                    text = String.format("%.1f", stdRatio),
+                    style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.primary,
+                    fontWeight = FontWeight.SemiBold
+                )
+            }
+            Slider(
+                value = stdRatio,
+                onValueChange = onStdRatioChange,
+                valueRange = 0.5f..5f,
+                modifier = Modifier.fillMaxWidth()
+            )
+            Row(modifier = Modifier.fillMaxWidth()) {
+                Text("0.5", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Spacer(Modifier.weight(1f))
+                Text("5.0", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+    }
+}
+
+/**
+ * kNN Merge 子面板: 近邻合并参数。
+ * kNN Merge sub-panel: neighbor merge parameters.
+ */
+@Composable
+private fun PlyMergePanel(
+    mergeK: Int,
+    mergeRatio: Float,
+    mergeCap: Float,
+    onMergeKChange: (Int) -> Unit,
+    onMergeRatioChange: (Float) -> Unit,
+    onMergeCapChange: (Float) -> Unit
+) {
+    val haptic = LocalHapticFeedback.current
+    var draftK by remember(mergeK) { mutableStateOf(mergeK.toFloat()) }
+    LaunchedEffect(mergeK) { draftK = mergeK.toFloat() }
+
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(
+            modifier = Modifier.padding(Spacing.lg).fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            Text(
+                stringResource(R.string.settings_ply_knn_merge),
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold
+            )
+            Text(
+                stringResource(R.string.settings_ply_knn_merge_desc),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            // k neighbors
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    stringResource(R.string.settings_ply_k),
+                    style = MaterialTheme.typography.labelLarge,
+                    modifier = Modifier.weight(1f)
+                )
+                Text(
+                    text = mergeK.toString(),
+                    style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.primary,
+                    fontWeight = FontWeight.SemiBold
+                )
+            }
+            Slider(
+                value = draftK,
+                onValueChange = { raw ->
+                    val newVal = raw.roundToInt()
+                    if (newVal != draftK.roundToInt()) {
+                        draftK = raw
+                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                    }
+                },
+                onValueChangeFinished = { onMergeKChange(draftK.roundToInt()) },
+                valueRange = 4f..32f,
+                steps = 13,
+                modifier = Modifier.fillMaxWidth()
+            )
+            Row(modifier = Modifier.fillMaxWidth()) {
+                Text("4", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Spacer(Modifier.weight(1f))
+                Text("32", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Text(
+                stringResource(R.string.settings_ply_k_hint),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 2.dp)
+            )
+            // Merge ratio
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    stringResource(R.string.settings_ply_merge_ratio),
+                    style = MaterialTheme.typography.labelLarge,
+                    modifier = Modifier.weight(1f)
+                )
+                Text(
+                    text = "${(mergeRatio * 100).roundToInt()}%",
+                    style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.primary,
+                    fontWeight = FontWeight.SemiBold
+                )
+            }
+            Slider(
+                value = mergeRatio,
+                onValueChange = onMergeRatioChange,
+                valueRange = 0.05f..1f,
+                modifier = Modifier.fillMaxWidth()
+            )
+            Row(modifier = Modifier.fillMaxWidth()) {
+                Text("5%", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Spacer(Modifier.weight(1f))
+                Text("100%", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            // merge cap per pass
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    stringResource(R.string.settings_ply_merge_cap),
+                    style = MaterialTheme.typography.labelLarge,
+                    modifier = Modifier.weight(1f)
+                )
+                Text(
+                    text = "${(mergeCap * 100).roundToInt()}%",
+                    style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.primary,
+                    fontWeight = FontWeight.SemiBold
+                )
+            }
+            Slider(
+                value = mergeCap,
+                onValueChange = onMergeCapChange,
+                valueRange = 0.05f..1f,
+                modifier = Modifier.fillMaxWidth()
+            )
+            Row(modifier = Modifier.fillMaxWidth()) {
+                Text("5%", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Spacer(Modifier.weight(1f))
+                Text("100%", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Text(
+                stringResource(R.string.settings_ply_merge_cap_hint),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 2.dp)
+            )
+        }
+    }
+}
+
+/**
+ * Image directory filter panel: browse folders from internal storage root; tap to enter, long-press to multi-select.
+ */
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
+@Composable
+private fun ImageDirPanel(
+    dirs: Set<String>,
+    onDirsChange: (Set<String>) -> Unit
+) {
+    var showDialog by remember { mutableStateOf(false) }
+
+    // Summary card (selected dirs + add button)
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(
+            modifier = Modifier.padding(Spacing.lg).fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(Spacing.sm)
+        ) {
+            Text(
+                stringResource(R.string.settings_image_dirs),
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold
+            )
+            Text(
+                stringResource(R.string.settings_image_dirs_desc),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
+            if (dirs.isEmpty()) {
+                Text(
+                    stringResource(R.string.settings_image_dirs_empty),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontWeight = FontWeight.SemiBold
+                )
+            } else {
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    dirs.forEach { dir ->
+                        val name = dir.substringAfterLast("/").ifEmpty { dir }
+                        FilterChip(
+                            selected = true,
+                            onClick = {
+                                onDirsChange(dirs - dir)
+                            },
+                            label = { Text(name) }
+                        )
+                    }
+                }
+            }
+
+            FilledTonalButton(onClick = { showDialog = true }) {
+                Text(stringResource(R.string.settings_image_dirs_add))
+            }
+        }
+    }
+
+    // Directory picker (file-system browsing, tap to enter, long-press to multi-select, stores full paths)
+    if (showDialog) {
+        ImageDirPickerDialog(
+            initialDirs = dirs,
+            onDirsChange = onDirsChange,
+            onDismiss = { showDialog = false }
+        )
+    }
+}
+
+/**
+ * Image directory picker: file-system browsing; tap to enter, long-press to multi-select; stores full paths.
+ * 路径用于 ImagePickerDialog 中通过 DATA LIKE 过滤, 确保选中的目录及其子目录下所有图片都被包含。
+ * Paths are used in ImagePickerDialog via DATA LIKE filtering, so all images in the selected
+ * directory and its subdirectories are included.
+ */
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
+@Composable
+private fun ImageDirPickerDialog(
+    initialDirs: Set<String>,
+    onDirsChange: (Set<String>) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val root = remember { Environment.getExternalStorageDirectory() }
+    val stack = remember { mutableStateListOf(root) }
+    val current = stack.last()
+
+    var selectMode by remember { mutableStateOf(false) }
+    val selected = remember { mutableStateListOf<String>() }
+
+    var refreshTick by remember { mutableIntStateOf(0) }
+
+    var entries by remember { mutableStateOf<List<File>>(emptyList()) }
+    var loading by remember { mutableStateOf(true) }
+
+    LaunchedEffect(Unit) {
+        selected.clear()
+        selected.addAll(initialDirs)
+    }
+
+    LaunchedEffect(current, refreshTick) {
+        loading = true
+        entries = withContext(Dispatchers.IO) {
+            (current.listFiles() ?: emptyArray<File>())
+                .filter { it.isDirectory && !it.name.startsWith(".") }
+                .sortedWith(compareBy({ it.name.lowercase() }))
+                .toList()
+        }
+        loading = false
+    }
+
+    fun enter(dir: File) {
+        selectMode = false
+        stack.add(dir)
+    }
+
+    fun back() {
+        if (selectMode) {
+            selectMode = false
+        } else if (stack.size > 1) {
+            stack.removeAt(stack.size - 1)
+        }
+    }
+
+    fun toggle(dir: File) {
+        val path = dir.absolutePath
+        if (selected.contains(path)) {
+            selected.remove(path)
+        } else {
+            selected.add(path)
+        }
+    }
+
+    val localizedContext = LocalContext.current
+
+    BasicAlertDialog(
+        onDismissRequest = onDismiss,
+        modifier = Modifier.fillMaxWidth(0.96f).fillMaxHeight(0.9f),
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        CompositionLocalProvider(LocalContext provides localizedContext) {
+        Surface(
+            shape = MaterialTheme.shapes.extraLarge,
+            color = MaterialTheme.colorScheme.surfaceContainerLow
+        ) {
+            Column(modifier = Modifier.fillMaxSize().padding(Spacing.md)) {
+                // Title bar
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                    if (stack.size > 1 || selectMode) {
+                        IconButton(onClick = { back() }) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.fm_back_cd))
+                        }
+                    } else {
+                        Icon(
+                            Icons.Filled.Folder,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(48.dp).padding(12.dp)
+                        )
+                    }
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = stringResource(R.string.settings_image_dirs),
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Text(
+                            text = relativeStoragePath(root, current),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                    TextButton(onClick = {
+                        selectMode = !selectMode
+                        if (!selectMode) {
+                            selected.clear()
+                            selected.addAll(initialDirs)
+                        }
+                    }) {
+                        Icon(
+                            imageVector = if (selectMode) Icons.Filled.CheckCircle else Icons.Filled.SelectAll,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(Modifier.width(Spacing.xs))
+                        Text(if (selectMode) stringResource(R.string.fm_done) else stringResource(R.string.fm_multiselect))
+                    }
+                    IconButton(onClick = onDismiss) {
+                        Icon(Icons.Filled.Close, contentDescription = stringResource(R.string.fm_close_cd))
+                    }
+                }
+
+                HorizontalDivider(modifier = Modifier.padding(vertical = Spacing.xs))
+
+                // Directory list
+                if (loading) {
+                    Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                        CircularProgressIndicator(modifier = Modifier.size(32.dp))
+                    }
+                } else if (entries.isEmpty()) {
+                    Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                        Text(
+                            text = stringResource(R.string.fm_empty),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                } else {
+                    LazyColumn(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                        items(entries, key = { it.absolutePath }) { dir ->
+                            ImageDirRow(
+                                dir = dir,
+                                selectMode = selectMode,
+                                selected = selected.contains(dir.absolutePath),
+                                onClick = {
+                                    if (selectMode) {
+                                        toggle(dir)
+                                    } else {
+                                        enter(dir)
+                                    }
+                                },
+                                onLongClick = {
+                                    if (!selectMode) {
+                                        selectMode = true
+                                        toggle(dir)
+                                    }
+                                },
+                                onCheckedChange = { toggle(dir) }
+                            )
+                        }
+                    }
+                }
+
+                // Bottom buttons
+                if (selectMode) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(top = Spacing.sm),
+                        horizontalArrangement = Arrangement.End
+                    ) {
+                        OutlinedButton(onClick = {
+                            selectMode = false
+                            selected.clear()
+                            selected.addAll(initialDirs)
+                        }) {
+                            Text(stringResource(android.R.string.cancel))
+                        }
+                        Spacer(Modifier.width(Spacing.sm))
+                        Button(
+                            onClick = {
+                                onDirsChange(selected.toSet())
+                                onDismiss()
+                            }
+                        ) {
+                            Text(stringResource(R.string.settings_image_dirs_confirm))
+                        }
+                    }
+                }
+            }
+        }
+        } // CompositionLocalProvider
+    }
+}
+
+/** Single directory row (long-press for multi-select, tap to enter/toggle). */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun ImageDirRow(
+    dir: File,
+    selectMode: Boolean,
+    selected: Boolean,
+    onClick: () -> Unit,
+    onLongClick: () -> Unit,
+    onCheckedChange: () -> Unit
+) {
+    ListItem(
+        leadingContent = {
+            Icon(
+                imageVector = Icons.Filled.Folder,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(24.dp)
+            )
+        },
+        headlineContent = {
+            Text(
+                text = dir.name,
+                style = MaterialTheme.typography.bodyLarge,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        },
+        trailingContent = if (selectMode) {
+            {
+                Checkbox(
+                    checked = selected,
+                    onCheckedChange = { onCheckedChange() }
+                )
+            }
+        } else null,
+        modifier = Modifier.combinedClickable(
+            onClick = onClick,
+            onLongClick = onLongClick
+        )
+    )
+}
+
+/** Display path relative to storage root. */
+private fun relativeStoragePath(root: File, current: File): String {
+    val rel = root.toPath().relativize(current.toPath()).toString()
+    return if (rel.isEmpty()) root.name else "${root.name}/$rel"
+}
+
+/**
+ * PLY 保存目录选择器弹窗: 从内部储存根目录浏览, 点击进入文件夹, 点击"选择此目录"确认。
+ * PLY save directory picker: browse from internal storage root; tap to enter, tap "Select Directory" to confirm.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun PlyDirPickerDialog(
+    initialPath: String,
+    onSelected: (String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val root = remember { Environment.getExternalStorageDirectory() }
+    val stack = remember { mutableStateListOf(root) }
+    val current = stack.last()
+
+    var entries by remember { mutableStateOf<List<File>>(emptyList()) }
+    var loading by remember { mutableStateOf(true) }
+
+    LaunchedEffect(current) {
+        loading = true
+        entries = withContext(Dispatchers.IO) {
+            (current.listFiles() ?: emptyArray<File>())
+                .filter { it.isDirectory && !it.name.startsWith(".") }
+                .sortedWith(compareBy({ it.name.lowercase() }))
+                .toList()
+        }
+        loading = false
+    }
+
+    fun enter(dir: File) { stack.add(dir) }
+    fun back() { if (stack.size > 1) stack.removeAt(stack.size - 1) }
+
+    // Capture the outer localized Context: BasicAlertDialog creates a separate window
+    // that resets LocalContext; re-inject it so language switches take effect
+    val plyDirLocalizedContext = LocalContext.current
+
+    BasicAlertDialog(
+        onDismissRequest = onDismiss,
+        modifier = Modifier.fillMaxWidth(0.96f).fillMaxHeight(0.9f),
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        CompositionLocalProvider(LocalContext provides plyDirLocalizedContext) {
+        Surface(
+            shape = MaterialTheme.shapes.extraLarge,
+            color = MaterialTheme.colorScheme.surfaceContainerLow
+        ) {
+            Column(modifier = Modifier.fillMaxSize().padding(Spacing.md)) {
+                // Title bar
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                    if (stack.size > 1) {
+                        IconButton(onClick = { back() }) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.fm_back_cd))
+                        }
+                    } else {
+                        Icon(
+                            Icons.Filled.Folder,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(48.dp).padding(12.dp)
+                        )
+                    }
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = stringResource(R.string.settings_ply_location),
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Text(
+                            text = relativeStoragePath(root, current),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                    IconButton(onClick = onDismiss) {
+                        Icon(Icons.Filled.Close, contentDescription = stringResource(R.string.fm_close_cd))
+                    }
+                }
+
+                HorizontalDivider(modifier = Modifier.padding(vertical = Spacing.xs))
+
+                // Directory list
+                if (loading) {
+                    Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                        CircularProgressIndicator(modifier = Modifier.size(32.dp))
+                    }
+                } else if (entries.isEmpty()) {
+                    Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                        Text(
+                            text = stringResource(R.string.fm_empty),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                } else {
+                    LazyColumn(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                        items(entries, key = { it.absolutePath }) { dir ->
+                            ListItem(
+                                leadingContent = {
+                                    Icon(
+                                        imageVector = Icons.Filled.Folder,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(24.dp)
+                                    )
+                                },
+                                headlineContent = {
+                                    Text(
+                                        text = dir.name,
+                                        style = MaterialTheme.typography.bodyLarge,
+                                        fontWeight = FontWeight.SemiBold,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                },
+                                modifier = Modifier.clickable { enter(dir) }
+                            )
+                        }
+                    }
+                }
+
+                // Bottom buttons: select current directory
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(top = Spacing.sm),
+                    horizontalArrangement = Arrangement.End
+                ) {
+                    OutlinedButton(onClick = onDismiss) {
+                        Text(stringResource(android.R.string.cancel))
+                    }
+                    Spacer(Modifier.width(Spacing.sm))
+                    Button(onClick = { onSelected(current.absolutePath) }) {
+                        Text(stringResource(R.string.settings_choose_dir))
+                    }
+                }
+            }
+        }
+        } // CompositionLocalProvider
     }
 }

@@ -9,7 +9,6 @@
  *   Merge reassembles the image on a grid (steps x steps), cropping `padding`
  *   pixels on each edge.
  *
- *   调用参数:
  *   Call sites:
  *     x0 latent0/latent1/patch_features: 25 patches,  padding=3  → 96x96
  *     x1 patch_features:                  9 patches,  padding=6  → 48x48
@@ -29,15 +28,15 @@ extern "C" {
  *                  Input patches, shape [B * steps*steps, C, ph, pw]
  *  @param dst      输出特征图,   shape [B, C, H_out, W_out]
  *                  Output feature map, shape [B, C, H_out, W_out]
- *  @param B        批次数 / batch count
- *  @param C        通道数 / channel count
- *  @param steps    grid 步数 (sqrt(num_patches / B)) / grid steps (sqrt(num_patches / B))
- *  @param ph       patch 高 (24) / patch height (24)
- *  @param pw       patch 宽 (24) / patch width (24)
- *  @param padding  每边裁剪量 (3 或 6) / per-edge crop (3 or 6)
+ *  batch count
+ *  channel count
+ *  B)) / grid steps (sqrt(num_patches / B))
+ *  patch height (24)
+ *  patch width (24)
+ *  per-edge crop (3 or 6)
  *  @param H_out    输出高 (steps*ph - 2*padding*(steps-1) 或通过外部已知值)
  *                  Output height (steps*ph - 2*padding*(steps-1) or externally known)
- *  @param W_out    输出宽 / output width
+ *  output width
  */
 void merge_grid(const float *patches, float *dst,
                 int B, int C, int steps, int ph, int pw,

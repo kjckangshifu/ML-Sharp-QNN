@@ -9,6 +9,7 @@ import java.io.File
 import java.io.FileOutputStream
 import java.net.HttpURLConnection
 import java.net.URL
+import java.util.concurrent.atomic.AtomicLong
 
 /**
  * 预转换模型下载器 (P2P 分块并行下载)。
@@ -17,40 +18,33 @@ import java.net.URL
  * 从 HuggingFace 或国内镜像站 (HF Mirror) 下载 DLC 模型文件。
  * Downloads DLC model files from HuggingFace or HF Mirror (for Chinese users).
  *
- * 文件列表 (5个模型):
  * File list (5 models):
  *   pe.dlc, ie.dlc, rest_a.dlc, rest_b.dlc, rest_c.dlc
  *
- * 仓库路径: kjcpc/ML-Sharp-QNN
+ * ML-Sharp-QNN
  * Repo path: kjcpc/ML-Sharp-QNN
  */
 class ModelDownloader(private val context: Context) {
 
     companion object {
-        /** 每个文件的分块数 (并发下载) */
         /** Chunk count per file (parallel download) */
         private const val CHUNK_COUNT = 4
 
-        /** 连接超时 / Connection timeout */
         private const val CONNECT_TIMEOUT_MS = 15_000
 
-        /** 读取超时 / Read timeout */
         private const val READ_TIMEOUT_MS = 30_000
 
-        /** 下载缓冲区大小 / Download buffer size */
         private const val BUFFER_SIZE = 8192
 
-        /** 分块下载阈值: 小于此值的文件直接用简单流式下载 */
         /** Chunked download threshold: files smaller than this use simple streaming */
         private const val CHUNK_THRESHOLD = 4 * 1024 * 1024L // 4 MB
 
-        /** HuggingFace 官方源 / HuggingFace official URL */
+        /** HuggingFace official URL */
         private const val HG_BASE_URL = "https://huggingface.co/kjcpc/ML-Sharp-QNN/resolve/main"
 
-        /** HF 镜像站 (国内用户推荐) / HF Mirror (recommended for Chinese users) */
+        /** HF Mirror (recommended for Chinese users) */
         private const val HM_BASE_URL = "https://hf-mirror.com/kjcpc/ML-Sharp-QNN/resolve/main"
 
-        /** 模型精度目录 / Model precision directory */
         private const val PRECISION_DIR = "dlc/w8a16"
 
         /** 5 个 DLC 模型文件名 */
@@ -89,7 +83,6 @@ class ModelDownloader(private val context: Context) {
     private var cancelled = false
 
     /**
-     * 取消当前下载。
      * Cancel the current download.
      */
     fun cancel() {
@@ -97,25 +90,26 @@ class ModelDownloader(private val context: Context) {
     }
 
     /**
-     * 下载所有 5 个模型文件到 dlc/ 目录。
+     * 目录。
      * Download all 5 model files to the dlc/ directory.
      *
      * 注意: onComplete 始终会被调用 (即使取消), 调用方在此统一重置状态。
      * Note: onComplete is always called (even on cancel), so callers reset state there.
      *
-     * @param source 下载源 / download source
-     * @param onProgress 进度回调 (文件名, 当前索引, 总数) / progress callback (fileName, currentIndex, total)
-     * @param onComplete 完成回调 (成功数, 总数) — 始终调用 / completion callback (successCount, totalCount) — always called
-     * @param onError 单文件错误回调 (错误信息) — 不重置整体状态 / single-file error callback (error message) — does NOT reset overall state
+     * download source
+     * file-level progress callback (fileName, currentIndex, total)
+     * byte-level progress callback (downloaded bytes, total bytes)
+     * completion callback (successCount, totalCount) — always called
+     * single-file error callback (error message) — does NOT reset overall state
      */
     suspend fun downloadAll(
         source: SettingsRepository.DownloadSource,
         onProgress: (fileName: String, current: Int, total: Int) -> Unit = { _, _, _ -> },
+        onBytesProgress: (downloadedBytes: Long, totalBytes: Long) -> Unit = { _, _ -> },
         onComplete: (successCount: Int, totalCount: Int) -> Unit = { _, _ -> },
         onError: (message: String) -> Unit = {}
     ) {
         cancelled = false
-        // 使用与 ModelStore 一致的模型根目录 (外部私有目录优先)
         // Use the same model root directory as ModelStore (external private dir preferred)
         val base = context.getExternalFilesDir(null) ?: context.filesDir
         val dlcDir = File(base, "sharp_models/dlc")
@@ -125,11 +119,27 @@ class ModelDownloader(private val context: Context) {
 
         val total = MODEL_FILES.size
         var successCount = 0
-        var cancelledByUser = false
+
+        // Collect all file sizes upfront (HEAD requests) for byte-level progress
+        val fileSizes = LongArray(total)
+        coroutineScope {
+            val sizeJobs = MODEL_FILES.mapIndexed { index, fileName ->
+                launch {
+                    if (!cancelled) {
+                        val url = getModelUrl(source, fileName)
+                        fileSizes[index] = getFileSize(url)
+                    }
+                }
+            }
+            sizeJobs.forEach { it.join() }
+        }
+        val totalBytes = fileSizes.filter { it > 0 }.sum()
+
+        // Cumulative downloaded bytes (across files)
+        val cumulativeBytes = AtomicLong(0L)
 
         for ((index, fileName) in MODEL_FILES.withIndex()) {
             if (cancelled) {
-                cancelledByUser = true
                 break // 跳出循环, 确保 onComplete 被调用
                 // break to ensure onComplete is called
             }
@@ -140,38 +150,62 @@ class ModelDownloader(private val context: Context) {
             val destFile = File(dlcDir, fileName)
 
             try {
-                downloadFile(url, destFile)
+                downloadFile(url, destFile) { fileBytes ->
+                    // Cumulative byte progress across files
+                    val prevBytes = (0 until index).sumOf { fileSizes[it] }
+                    onBytesProgress(prevBytes + fileBytes, totalBytes)
+                }
                 successCount++
+                cumulativeBytes.addAndGet(fileSizes[index])
             } catch (e: Exception) {
                 if (cancelled) {
-                    cancelledByUser = true
                     break
                 }
                 onError("${e.message ?: "Unknown error"}")
-                // 删除失败的部分下载文件
                 // Delete partial/failed download file
                 destFile.delete()
             }
         }
 
-        // 始终调用 onComplete, 确保调用方重置状态
         // Always call onComplete so the caller resets state
         onComplete(successCount, total)
     }
 
     /**
-     * 下载单个文件 (HEAD 探测 + 流式/分块下载)。
+     * HEAD 请求获取文件大小。
+     * HEAD request to get the file size.
+     */
+    private suspend fun getFileSize(urlStr: String): Long = withContext(Dispatchers.IO) {
+        try {
+            val conn = URL(urlStr).openConnection() as HttpURLConnection
+            conn.connectTimeout = CONNECT_TIMEOUT_MS
+            conn.readTimeout = READ_TIMEOUT_MS
+            conn.requestMethod = "HEAD"
+            conn.connect()
+            val size = conn.contentLengthLong
+            conn.disconnect()
+            if (size > 0) size else 0L
+        } catch (_: Exception) {
+            0L
+        }
+    }
+
+    /**
+     * 分块下载)。
      * Download a single file (HEAD probe + streaming/chunked download).
      *
      * 先用 HEAD 请求获取文件大小, 再决定用简单流式还是分块并行下载。
      * First uses HEAD request to get file size, then decides simple or chunked download.
+     *
+     * byte-level progress (bytes downloaded for this file)
      */
-    private suspend fun downloadFile(urlStr: String, destFile: File): Unit = withContext(Dispatchers.IO) {
-        // 检查取消令牌
+    private suspend fun downloadFile(
+        urlStr: String, destFile: File,
+        onBytesProgress: (fileBytes: Long) -> Unit = {}
+    ): Unit = withContext(Dispatchers.IO) {
         // Check cancellation token
         if (cancelled) throw RuntimeException("Download cancelled")
 
-        // HEAD 请求获取文件大小 (不下载正文, 避免浪费)
         // HEAD request to get file size (no body, avoids waste)
         val headConn = URL(urlStr).openConnection() as HttpURLConnection
         headConn.connectTimeout = CONNECT_TIMEOUT_MS
@@ -187,20 +221,17 @@ class ModelDownloader(private val context: Context) {
             throw RuntimeException("HTTP $responseCode for $urlStr")
         }
 
-        // 小文件 (< 4MB) 或无法获取大小的文件 → 简单流式下载
         // Small files (< 4MB) or unknown size → simple streaming download
         if (contentLength <= 0 || contentLength < CHUNK_THRESHOLD) {
-            downloadSimple(urlStr, destFile)
+            downloadSimple(urlStr, destFile, onBytesProgress)
             return@withContext
         }
 
-        // 大文件 → 尝试分块并行下载; 若服务器不支持 Range 则回退流式
         // Large files → try chunked parallel download; fall back to streaming if server doesn't support Range
-        val chunkedSuccess = tryDownloadChunked(urlStr, destFile, contentLength)
+        val chunkedSuccess = tryDownloadChunked(urlStr, destFile, contentLength, onBytesProgress)
         if (!chunkedSuccess) {
-            // 服务器不支持 Range (返回 200 而非 206), 回退流式下载
             // Server doesn't support Range (returned 200 instead of 206), fall back to streaming
-            downloadSimple(urlStr, destFile)
+            downloadSimple(urlStr, destFile, onBytesProgress)
         }
     }
 
@@ -209,9 +240,9 @@ class ModelDownloader(private val context: Context) {
      * Try chunked parallel download, returns whether successful (false = server doesn't support Range).
      */
     private suspend fun tryDownloadChunked(
-        urlStr: String, destFile: File, contentLength: Int
+        urlStr: String, destFile: File, contentLength: Int,
+        onBytesProgress: (fileBytes: Long) -> Unit
     ): Boolean = withContext(Dispatchers.IO) {
-        // 先发一个 Range 探测请求, 确认服务器支持 206 Partial Content
         // Send a Range probe request first to confirm server supports 206 Partial Content
         val probeConn = URL(urlStr).openConnection() as HttpURLConnection
         probeConn.connectTimeout = CONNECT_TIMEOUT_MS
@@ -223,13 +254,11 @@ class ModelDownloader(private val context: Context) {
         val probeCode = probeConn.responseCode
         probeConn.disconnect()
 
-        // 服务器不支持 Range → 回退流式下载
         // Server doesn't support Range → fall back to streaming
         if (probeCode != HttpURLConnection.HTTP_PARTIAL) {
             return@withContext false
         }
 
-        // 服务器支持 Range → 分块并行下载
         // Server supports Range → chunked parallel download
         val tmpDir = File(destFile.parentFile, ".tmp_${destFile.name}")
         if (tmpDir.exists()) tmpDir.deleteRecursively()
@@ -238,6 +267,7 @@ class ModelDownloader(private val context: Context) {
         try {
             val chunkSize = contentLength / CHUNK_COUNT
             val chunkFiles = mutableListOf<File>()
+            val chunkBytes = AtomicLong(0L)
 
             coroutineScope {
                 for (i in 0 until CHUNK_COUNT) {
@@ -247,7 +277,9 @@ class ModelDownloader(private val context: Context) {
                     chunkFiles.add(chunkFile)
 
                     launch {
-                        downloadChunk(urlStr, chunkFile, start, end)
+                        downloadChunk(urlStr, chunkFile, start, end) { delta ->
+                            onBytesProgress(chunkBytes.addAndGet(delta))
+                        }
                     }
                 }
             }
@@ -255,17 +287,18 @@ class ModelDownloader(private val context: Context) {
             mergeChunks(chunkFiles, destFile)
             return@withContext true
         } finally {
-            // 清理临时目录
             // Clean up temp directory
             tmpDir.deleteRecursively()
         }
     }
 
     /**
-     * 简单流式下载 (单线程, 全量)。
      * Simple streaming download (single thread, full file).
      */
-    private suspend fun downloadSimple(urlStr: String, destFile: File): Unit = withContext(Dispatchers.IO) {
+    private suspend fun downloadSimple(
+        urlStr: String, destFile: File,
+        onBytesProgress: (fileBytes: Long) -> Unit = {}
+    ): Unit = withContext(Dispatchers.IO) {
         if (cancelled) throw RuntimeException("Download cancelled")
 
         val conn = URL(urlStr).openConnection() as HttpURLConnection
@@ -285,11 +318,14 @@ class ModelDownloader(private val context: Context) {
                 FileOutputStream(destFile).use { output ->
                     val buffer = ByteArray(BUFFER_SIZE)
                     var bytesRead: Int
+                    var totalRead = 0L
                     while (input.read(buffer).also { bytesRead = it } != -1) {
                         if (cancelled) {
                             throw RuntimeException("Download cancelled")
                         }
                         output.write(buffer, 0, bytesRead)
+                        totalRead += bytesRead
+                        onBytesProgress(totalRead)
                     }
                 }
             }
@@ -302,7 +338,10 @@ class ModelDownloader(private val context: Context) {
      * 下载单个分块 (Range 请求)。
      * Download a single chunk (Range request).
      */
-    private suspend fun downloadChunk(urlStr: String, chunkFile: File, start: Long, end: Long): Unit =
+    private suspend fun downloadChunk(
+        urlStr: String, chunkFile: File, start: Long, end: Long,
+        onBytesProgress: (delta: Long) -> Unit = {}
+    ): Unit =
         withContext(Dispatchers.IO) {
             if (cancelled) throw RuntimeException("Download cancelled")
 
@@ -329,6 +368,7 @@ class ModelDownloader(private val context: Context) {
                                 throw RuntimeException("Download cancelled")
                             }
                             output.write(buffer, 0, bytesRead)
+                            onBytesProgress(bytesRead.toLong())
                         }
                     }
                 }
@@ -338,7 +378,6 @@ class ModelDownloader(private val context: Context) {
         }
 
     /**
-     * 合并分块文件为一个完整文件。
      * Merge chunk files into a single complete file.
      */
     private suspend fun mergeChunks(chunkFiles: List<File>, destFile: File): Unit = withContext(Dispatchers.IO) {

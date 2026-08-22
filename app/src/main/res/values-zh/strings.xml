@@ -34,15 +34,20 @@
     <string name="home_image_load_failed">无法加载图片</string>
     <string name="home_run_section">推理运行</string>
     <string name="home_run">运行推理</string>
+    <string name="home_running">推理中…</string>
     <string name="home_missing_models">需先在「模型」页导入: %1$s</string>
     <string name="home_progress_section">推理进度</string>
     <string name="home_done_total">推理完成 · 总耗时</string>
     <string name="home_export_section">导出结果</string>
     <string name="home_export_ply">导出 PLY</string>
+    <string name="home_exporting">导出中…</string>
     <string name="home_choose_dir">选择保存目录</string>
     <string name="home_save_to">保存至: %1$s</string>
     <string name="home_no_save_dir">尚未设置保存目录, 点击后选择</string>
     <string name="home_export_after_done">推理完成后可导出 PLY</string>
+
+    <string name="picker_title">选择图片</string>
+    <string name="picker_close">关闭</string>
 
     <!-- ====== Models ====== -->
     <string name="models_subtitle">5 个模型部分: 图块编码 (PE) · 图像编码 (IE) · 特征融合 · 视差估计 · 高斯增量</string>
@@ -52,7 +57,7 @@
     <string name="models_artifact">编译产物</string>
     <string name="models_not_imported_hint">未导入模型，请选择 .bin 或 .dlc 文件</string>
     <string name="models_compiling">正在编译，请稍候…</string>
-    <string name="models_compile_cancel_hint">编译步骤之间响应取消，取消后已释放资源并删除半成品产物</string>
+    <string name="models_compile_cancel_hint">编译不能直接中断，点击取消后会在完成编译后删除文件</string>
     <string name="models_cancel_compile">取消编译</string>
     <string name="models_import">导入</string>
     <string name="models_compile">编译</string>
@@ -63,7 +68,8 @@
     <string name="models_download_title">预转换模型</string>
     <string name="models_download_desc">一键从 HuggingFace 下载全部 5 个 DLC 模型，无需手动导入</string>
     <string name="models_download_btn">下载 W8A16</string>
-    <string name="models_download_downloading">正在下载 %1$s (%2$d/%3$d)…</string>
+    <string name="models_download_downloading">正在下载 %1$s…</string>
+    <string name="models_download_preparing">正在准备…</string>
     <string name="models_download_complete">下载完成: %1$d/%2$d 个文件</string>
     <string name="models_download_failed">下载失败: %1$s</string>
     <string name="models_download_cancel">取消</string>
@@ -83,6 +89,7 @@
     <string name="model_rest_c">高斯增量</string>
 
     <!-- ====== Pipeline stages ====== -->
+    <string name="stage_init">初始化</string>
     <string name="stage_compile">模型编译</string>
     <string name="stage_decode">解码图片</string>
     <string name="stage_pre">预处理切 Patch</string>
@@ -93,6 +100,8 @@
     <string name="stage_rest_b">视差估计</string>
     <string name="stage_rest_c">高斯增量</string>
     <string name="stage_post">点云生成</string>
+    <string name="detail_init_qnn">正在初始化 QNN 运行时…</string>
+    <string name="detail_loading_model">正在加载 %1$s…</string>
     <string name="detail_compiling">正在编译 %1$s…</string>
     <string name="detail_compiled">%1$s 编译完成</string>
     <string name="detail_cancelled">编译已中断</string>
@@ -114,8 +123,35 @@
     <string name="settings_ply_not_set">未设置, 导出时需选择目录</string>
     <string name="settings_ply_current">当前目录: %1$s</string>
     <string name="settings_choose_dir">选择目录</string>
+    <string name="settings_ply_optimize">PLY 导出优化</string>
+    <string name="settings_ply_optimize_desc">通过透明度剪枝、离群点剔除和 kNN 合并减少点云数量并清除漂浮点</string>
+    <string name="settings_ply_knn_merge">kNN 合并</string>
+    <string name="settings_ply_knn_merge_desc">使用矩匹配合并相邻高斯, 在保持视觉质量的同时减少点云数量</string>
+    <string name="settings_ply_k">近邻数 (k)</string>
+    <string name="settings_ply_k_hint">k 越大合并越温和, k 越小越激进; 推荐从 16 开始</string>
+    <string name="settings_ply_merge_cap">合并上限</string>
+    <string name="settings_ply_merge_cap_hint">单轮合并中最多合并剩余点数的百分比; 越小越渐进, 越大越激进</string>
+    <string name="settings_ply_prune">透明度剪枝</string>
+    <string name="settings_ply_prune_desc">合并前剔除低透明度的高斯点; 值越大越激进</string>
+    <string name="settings_ply_prune_threshold">阈值</string>
+    <string name="settings_ply_sor">统计离群点剔除</string>
+    <string name="settings_ply_sor_desc">剔除空间孤立的漂浮点; 近邻数设为 0 可关闭</string>
+    <string name="settings_ply_sor_nb">近邻数</string>
+    <string name="settings_ply_sor_std">标准差倍数</string>
+    <string name="settings_ply_merge_ratio">目标比例</string>
+    <string name="stage_ply_optimize">PLY优化</string>
+    <string name="stage_ply_prune">透明度剪枝</string>
+    <string name="stage_ply_sor">统计离群点剔除</string>
+    <string name="stage_ply_knn">kNN合并</string>
+    <string name="settings_off">关闭</string>
     <string name="settings_image_details">显示图片详细信息</string>
     <string name="settings_image_details_desc">开启后, 选择图片时显示焦距、格式、尺寸等信息</string>
+    <string name="settings_image_dirs">图片目录过滤</string>
+    <string name="settings_image_dirs_desc">选择图片选择器中显示的文件夹; 留空 = 显示全部</string>
+    <string name="settings_image_dirs_empty">全部目录 (无过滤)</string>
+    <string name="settings_image_dirs_add">添加目录</string>
+    <string name="settings_image_dirs_remove">移除</string>
+    <string name="settings_image_dirs_confirm">确认选择</string>
     <string name="settings_htp_perf">HTP 性能调度</string>
     <string name="settings_htp_perf_desc">控制 HTP 电压角投票与 DCVS 调节策略; 更改后重启应用生效</string>
     <string name="settings_locked_mode">锁角模式 (默认)</string>
@@ -131,7 +167,7 @@
     <string name="settings_dcvs_policy">DCVS 调节策略</string>
     <string name="settings_dcvs_rule">规则: 最小角必须低于最大角, 目标角在区间内 (min &lt; target &lt;= max); 变更时自动校正</string>
     <string name="settings_dynamic_color">动态色彩</string>
-    <string name="settings_dynamic_color_desc">跟随系统壁纸生成主题色 (Android 12+ 生效); 关闭后使用内置蓝紫色调色板</string>
+    <string name="settings_dynamic_color_desc">跟随系统主题色 (Android 12+ 生效); 关闭后使用内置蓝紫色调色板</string>
     <string name="settings_logging">日志记录</string>
     <string name="settings_logging_desc">记录日志并实时写入 Download/sharp_log/ 目录; 开启后每次进入应用自动记录</string>
     <string name="settings_cache">缓存</string>
@@ -157,6 +193,17 @@
 
     <!-- ====== Voltage corners / DCVS ====== -->
     <string name="corner_min">MIN (最低)</string>
+    <string name="corner_svs2">SVS2</string>
+    <string name="corner_svs">SVS</string>
+    <string name="corner_svs_plus">SVS_PLUS</string>
+    <string name="corner_nom">NOM</string>
+    <string name="corner_nom_plus">NOM_PLUS</string>
+    <string name="corner_turbo">TURBO</string>
+    <string name="corner_turbo_plus">TURBO_PLUS</string>
+    <string name="corner_turbo_l2">TURBO_L2</string>
+    <string name="corner_turbo_l3">TURBO_L3</string>
+    <string name="corner_turbo_l4">TURBO_L4</string>
+    <string name="corner_turbo_l5">TURBO_L5</string>
     <string name="corner_max">MAX (最高)</string>
     <string name="dcvs_up_down">上下双向</string>
     <string name="dcvs_up_only">只升不降</string>

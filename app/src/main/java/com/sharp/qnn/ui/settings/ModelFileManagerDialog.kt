@@ -36,6 +36,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
@@ -44,6 +45,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -61,9 +63,8 @@ import java.io.File
  * 模型文件管理器弹窗 (MD3 BasicAlertDialog)。
  * Model file manager dialog (MD3 BasicAlertDialog).
  *
- * 根目录为 sharp_models, 可进入子文件夹 (bin/ / dlc/), 支持多选删除文件。
+ * / dlc/), 支持多选删除文件。
  * Rooted at sharp_models; can drill into sub-folders (bin/ / dlc/) and multi-delete files.
- * 删除为真实删除 (应用私有目录, 无需权限)。
  * Deletion is final (app-private directory, no permission needed).
  */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -73,21 +74,17 @@ fun ModelFileManagerDialog(
     onDismiss: () -> Unit,
     onDeleted: () -> Unit
 ) {
-    // 导航栈: 根 → bin/|dlc/ ...
     // Navigation stack: root -> bin/|dlc/ ...
     val stack = remember { mutableStateListOf<File>(root) }
     val current = stack.last()
 
-    // 多选状态
     // Multi-select state
     var selectMode by remember { mutableStateOf(false) }
     val selected = remember { mutableStateListOf<String>() }
 
-    // 删除结果提示
     // Delete result message
     var message by remember { mutableStateOf<String?>(null) }
 
-    // 列表刷新标记: 删除文件后强制重列目录
     // Refresh tick: forces re-listing after deletions
     var refreshTick by remember { mutableIntStateOf(0) }
 
@@ -132,17 +129,22 @@ fun ModelFileManagerDialog(
         if (deleted > 0) onDeleted()
     }
 
+    // 捕获外部本地化 Context: BasicAlertDialog 创建独立窗口会重置 LocalContext,
+    // Capture the outer localized Context: BasicAlertDialog creates a separate window
+    // that resets LocalContext; re-inject it here so language switches take effect
+    val localizedContext = LocalContext.current
+
     BasicAlertDialog(
         onDismissRequest = onDismiss,
         modifier = Modifier.fillMaxWidth(0.96f).fillMaxHeight(0.9f),
         properties = DialogProperties(usePlatformDefaultWidth = false)
     ) {
+        CompositionLocalProvider(LocalContext provides localizedContext) {
         Surface(
             shape = MaterialTheme.shapes.extraLarge,
             color = MaterialTheme.colorScheme.surfaceContainerLow
         ) {
             Column(modifier = Modifier.fillMaxSize().padding(Spacing.md)) {
-                // 标题栏
                 // Title bar
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
                     if (stack.size > 1) {
@@ -150,7 +152,12 @@ fun ModelFileManagerDialog(
                             Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.fm_back_cd))
                         }
                     } else {
-                        Spacer(Modifier.width(48.dp))
+                        Icon(
+                            Icons.Filled.Folder,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(48.dp).padding(12.dp)
+                        )
                     }
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
@@ -171,7 +178,7 @@ fun ModelFileManagerDialog(
                         if (!selectMode) selected.clear()
                     }) {
                         Icon(
-                            imageVector = if (selectMode) Icons.Filled.SelectAll else Icons.Filled.CheckCircle,
+                            imageVector = if (selectMode) Icons.Filled.CheckCircle else Icons.Filled.SelectAll,
                             contentDescription = null,
                             modifier = Modifier.size(18.dp)
                         )
@@ -185,7 +192,6 @@ fun ModelFileManagerDialog(
 
                 HorizontalDivider(modifier = Modifier.padding(vertical = Spacing.xs))
 
-                // 文件列表
                 // File list
                 if (entries.isEmpty()) {
                     Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
@@ -204,7 +210,6 @@ fun ModelFileManagerDialog(
                                 selected = selected.contains(file.absolutePath),
                                 onClick = {
                                     if (file.isDirectory) {
-                                        // 文件夹不可删除: 多选模式下不可选中, 仅普通模式可进入
                                         // Folders cannot be deleted: not selectable in multi-select; enterable only in normal mode
                                         if (!selectMode) enter(file)
                                     } else {
@@ -218,7 +223,6 @@ fun ModelFileManagerDialog(
                     }
                 }
 
-                // 底部消息 + 删除按钮
                 // Bottom message + delete button
                 if (message != null) {
                     Text(
@@ -247,10 +251,10 @@ fun ModelFileManagerDialog(
                 }
             }
         }
+        } // CompositionLocalProvider
     }
 }
 
-/** 单行文件/目录 (MD3 ListItem) */
 /** A single file/directory row (MD3 ListItem). */
 @Composable
 private fun FileRow(
@@ -312,14 +316,12 @@ private fun FileRow(
     )
 }
 
-/** 文件是否为编译产物 (pe_xxx.bin 等 <code>_ 前缀) */
 /** Whether a file is a compiled artifact (pe_xxx.bin, i.e. a <code>_ prefix). */
 private fun nameStartsWithModelCode(file: File): Boolean {
     val base = file.name.substringBeforeLast('.').lowercase()
     return ModelType.entries.any { base.startsWith("${it.code}_") }
 }
 
-/** 相对根目录的显示路径 */
 /** Display path relative to the root. */
 private fun relativePath(root: File, current: File): String {
     val rel = root.toPath().relativize(current.toPath()).toString()

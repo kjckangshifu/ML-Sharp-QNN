@@ -23,12 +23,12 @@ extern "C" {
  *              Input (float*, NCHW layout), size = batch * channel * height * width
  *  @param dst  输出数据 (float*, NCHW 布局), 大小同 src
  *              Output (float*, NCHW layout), same size as src
- *  @param batch  批次数 / batch count
- *  @param channel 通道数 (通常 3) / channel count (usually 3)
- *  @param height  图像高 / image height
- *  @param width   图像宽 / image width
- *  @param scale  缩放值 (默认 2.0) / scale factor (default 2.0)
- *  @param bias   偏置值 (默认 -1.0) / bias (default -1.0)
+ *  batch count
+ *  channel count (usually 3)
+ *  image height
+ *  image width
+ *  scale factor (default 2.0)
+ *  bias (default -1.0)
  */
 void normalizer_apply(const float *src, float *dst,
                       int batch, int channel, int height, int width,

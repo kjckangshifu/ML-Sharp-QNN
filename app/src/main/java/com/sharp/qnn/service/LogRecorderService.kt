@@ -18,7 +18,7 @@ import com.sharp.qnn.util.LogRecorder
  * 日志记录前台服务: 承载 [LogRecorder] 的会话生命周期。
  * Foreground service hosting the [LogRecorder] session lifecycle.
  *
- * 日志开关打开时启动 (前台服务), 切后台/Activity 销毁都不会停止记录;
+ * Activity 销毁都不会停止记录;
  * 开关关闭时发送 [ACTION_STOP] 停止并自杀。前台服务能显著降低进程被
  * 回收的概率, 从而避免 logcat 子进程随 App 进程被杀。
  * Recording starts as a foreground service when the toggle is on and survives
@@ -77,7 +77,6 @@ class LogRecorderService : Service() {
         private const val ACTION_START = "com.sharp.qnn.action.LOG_RECORD_START"
         private const val ACTION_STOP = "com.sharp.qnn.action.LOG_RECORD_STOP"
 
-        /** 启动日志记录服务 (前台, 需在进程存活时调用, 幂等) */
         /** Start the log recording service (foreground, idempotent) */
         fun start(context: Context) {
             ContextCompat.startForegroundService(
@@ -86,7 +85,6 @@ class LogRecorderService : Service() {
             )
         }
 
-        /** 停止日志记录服务 (幂等) */
         /** Stop the log recording service (idempotent) */
         fun stop(context: Context) {
             context.startService(

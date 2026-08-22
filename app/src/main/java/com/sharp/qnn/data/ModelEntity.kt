@@ -5,7 +5,6 @@ import com.sharp.qnn.R
 import org.json.JSONObject
 
 /**
- * 模型类型: 5 个模型部分。
  * Model types: the 5 model parts.
  *
  * - PE     : Patch Encoder / 图块编码
@@ -20,52 +19,44 @@ import org.json.JSONObject
  * - REST_C : REST Seg C / gaussian delta (image+disparity+features → delta)
  */
 enum class ModelType(
-    /** 双语显示名 (日志/消息用) / bilingual display name (logs & messages) */
     val displayName: String,
-    /** 槽位编码 / slot code */
     val code: String,
-    /** 本地化名称资源 (UI 用) / localized name string-res (UI) */
     @StringRes val nameRes: Int
 ) {
-    PE("图块编码 (Patch Encoder)", "pe", R.string.model_pe),
-    IE("图像编码 (Image Encoder)", "ie", R.string.model_ie),
-    REST_A("特征融合 (Feature Fusion)", "rest_a", R.string.model_rest_a),
-    REST_B("视差估计 (Disparity Estimation)", "rest_b", R.string.model_rest_b),
-    REST_C("高斯增量 (Gaussian Delta)", "rest_c", R.string.model_rest_c);
+    PE("Patch Encoder", "pe", R.string.model_pe),
+    IE("Image Encoder", "ie", R.string.model_ie),
+    REST_A("Feature Fusion", "rest_a", R.string.model_rest_a),
+    REST_B("Disparity Estimation", "rest_b", R.string.model_rest_b),
+    REST_C("Gaussian Delta", "rest_c", R.string.model_rest_c);
 
     companion object {
         fun fromCode(code: String): ModelType? = entries.firstOrNull { it.code == code }
     }
 }
 
-/** 模型格式: 预编译 .bin / DLC */
 /** Model format: precompiled .bin / DLC */
 enum class ModelFormat(val ext: String) {
     BIN("bin"),
     DLC("dlc")
 }
 
-/** 模型状态 */
 /** Model status */
 enum class ModelStatus(
-    /** 双语标签 (日志用) / bilingual label (logs) */
     val label: String,
-    /** 本地化标签资源 (UI 用) / localized label string-res (UI) */
     @StringRes val labelRes: Int
 ) {
-    NOT_IMPORTED("未导入", R.string.status_not_imported),
-    COMPILED("已编译", R.string.status_compiled),
-    UNCOMPILED("未编译", R.string.status_uncompiled),
-    COMPILING("编译中", R.string.status_compiling)
+    NOT_IMPORTED("Not Imported", R.string.status_not_imported),
+    COMPILED("Compiled", R.string.status_compiled),
+    UNCOMPILED("Uncompiled", R.string.status_uncompiled),
+    COMPILING("Compiling", R.string.status_compiling)
 }
 
 /**
- * 模型元数据。
  * Model metadata.
  *
- * @param type            模型类型 (PE / IE / REST_A / REST_B / REST_C)
+ * IE / REST_A / REST_B / REST_C)
  * @param type            model type (PE / IE / REST_A / REST_B / REST_C)
- * @param format          用户导入的原始格式 (BIN / DLC)
+ * DLC)
  * @param format          original format as imported (BIN / DLC)
  * @param sourcePath      原始文件路径 (.bin 或 .dlc)
  * @param sourcePath      path of the source file (.bin or .dlc)
@@ -91,11 +82,9 @@ data class ModelEntry(
     val importTime: Long
 ) {
 
-    /** 返回运行时实际加载的 .bin 路径 (优先编译产物，其次原始 .bin) */
     /** The .bin path actually loaded at runtime (compiled artifact first, raw .bin second) */
     val runtimeBinPath: String? get() = compiledBinPath ?: sourcePath.takeIf { format == ModelFormat.BIN }
 
-    /** 序列化为 JSON */
     /** Serialize to JSON */
     fun toJson(): JSONObject = JSONObject().apply {
         put("type", type.code)
@@ -109,7 +98,6 @@ data class ModelEntry(
     }
 
     companion object {
-        /** 从 JSON 反序列化 (格式错误返回 null) */
         /** Deserialize from JSON (returns null on malformed input) */
         fun fromJson(json: JSONObject): ModelEntry? {
             return try {

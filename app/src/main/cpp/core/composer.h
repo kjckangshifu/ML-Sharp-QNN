@@ -3,7 +3,6 @@
  *
  *   参考 composer.py:92-251
  *   Reference: composer.py:92-251
- *   全部纯算术 + 激活函数
  *   Pure arithmetic + activation functions only
  */
 #ifndef COMPOSER_H
@@ -45,14 +44,14 @@ typedef struct {
 /**
  * 运行 composer, 从 delta + base_values 生成 NDC gaussians。
  * Runs the composer, building NDC gaussians from delta + base_values.
- * @param delta     [1, 14, L, H, W]  (来自 prediction_head 输出 / from the prediction_head output)
- * @param base      基值 (来自 initializer) / base values (from the initializer)
- * @param global_scale  缩放因子 (来自 initializer) / scale factor (from the initializer)
- * @param H,W       delta 的空间尺寸 (768) / delta spatial size (768)
+ * from the prediction_head output)
+ * base values (from the initializer)
+ * scale factor (from the initializer)
+ * delta spatial size (768)
  * @param L         num_layers (2)
- * @param params    参数 / params
- * @param flatten_output  是否平铺输出 (1=是) / whether to flatten the output (1=yes)
- * @return          平铺的 Gaussians3D / the flattened Gaussians3D
+ * params
+ * whether to flatten the output (1=yes)
+ * the flattened Gaussians3D
  */
 Gaussians3DFlat composer_run(
     const float *delta,

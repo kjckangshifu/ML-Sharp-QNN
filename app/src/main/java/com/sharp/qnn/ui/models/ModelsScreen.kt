@@ -4,6 +4,8 @@ import android.app.Application
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -60,7 +62,6 @@ import com.sharp.qnn.util.LocaleUtil
 import com.sharp.qnn.util.MsgKey
 import com.sharp.qnn.util.i18nMessage
 import com.sharp.qnn.util.resolveMessage
-import com.sharp.qnn.util.resolveMessage
 import com.sharp.qnn.ui.theme.Spacing
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
@@ -83,10 +84,15 @@ class ModelsViewModel(app: Application) : AndroidViewModel(app) {
     private val _message = androidx.compose.runtime.mutableStateOf<String?>(null)
     val message: androidx.compose.runtime.State<String?> = _message
 
-    // ====== 模型下载状态 ======
-    // ====== Model download state ======
-    private val _downloadProgress = androidx.compose.runtime.mutableStateOf<Pair<String, Pair<Int, Int>>?>(null)
-    val downloadProgress: androidx.compose.runtime.State<Pair<String, Pair<Int, Int>>?> = _downloadProgress
+        // ====== Model download state ======
+    data class DownloadProgress(
+        val fileName: String,
+        val downloadedBytes: Long,
+        val totalBytes: Long
+    )
+
+    private val _downloadProgress = androidx.compose.runtime.mutableStateOf<DownloadProgress?>(null)
+    val downloadProgress: androidx.compose.runtime.State<DownloadProgress?> = _downloadProgress
 
     private val _downloading = androidx.compose.runtime.mutableStateOf(false)
     val downloading: androidx.compose.runtime.State<Boolean> = _downloading
@@ -100,28 +106,32 @@ class ModelsViewModel(app: Application) : AndroidViewModel(app) {
     fun startDownload() {
         if (_downloading.value) return
         _downloading.value = true
-        _downloadProgress.value = null
+        _downloadProgress.value = DownloadProgress(fileName = "", downloadedBytes = 0L, totalBytes = 0L)
 
         viewModelScope.launch {
             val source = sharpApp.settingsRepository.settingsFlow.first().downloadSource
 
             downloader.downloadAll(
                 source = source,
-                onProgress = { fileName, current, total ->
-                    _downloadProgress.value = fileName to (current to total)
+                onProgress = { fileName, _, _ ->
+                    _downloadProgress.value = _downloadProgress.value?.copy(fileName = fileName)
+                        ?: DownloadProgress(fileName = fileName, downloadedBytes = 0L, totalBytes = 0L)
+                },
+                onBytesProgress = { downloadedBytes, totalBytes ->
+                    _downloadProgress.value = _downloadProgress.value?.copy(
+                        downloadedBytes = downloadedBytes,
+                        totalBytes = totalBytes
+                    ) ?: DownloadProgress(fileName = "", downloadedBytes = downloadedBytes, totalBytes = totalBytes)
                 },
                 onComplete = { successCount, totalCount ->
-                    // onComplete 始终被调用 (包括取消时), 统一在此重置状态
                     // onComplete is always called (including on cancel), reset state here
                     _downloading.value = false
                     _downloadProgress.value = null
                     _message.value = MsgKey.k(MsgKey.MSG_DOWNLOAD_COMPLETE, successCount.toString(), totalCount.toString())
-                    // 下载完成后重新扫描模型目录
                     // Re-scan model directory after download completes
                     scanModels()
                 },
                 onError = { errorMsg ->
-                    // onError 仅报告单文件错误, 不重置整体下载状态
                     // onError only reports single-file errors, does NOT reset overall download state
                     _message.value = MsgKey.k(MsgKey.ERR_DOWNLOAD_FAIL, errorMsg)
                 }
@@ -137,17 +147,14 @@ class ModelsViewModel(app: Application) : AndroidViewModel(app) {
         downloader.cancel()
     }
 
-    // 当前语言下的本地化 Context (消息键参数用)
     // Locale-wrapped context for the current language (message-key arguments)
     private suspend fun localeCtx() =
         LocaleUtil.wrap(sharpApp, sharpApp.settingsRepository.settingsFlow.first().language)
 
-    /** 本地化模型名 (嵌入消息键参数) */
     /** Localized model name (embedded into message-key arguments) */
     private suspend fun modelName(type: ModelType): String =
         LocaleUtil.modelName(localeCtx(), type)
 
-    /** 异常 → 本地化错误文本 (异常 message 本身可能是消息键) */
     /** Exception → localized error text (the exception message may itself be a key) */
     private suspend fun errorText(e: Throwable?): String =
         resolveMessage(localeCtx(), e?.message ?: "")
@@ -155,7 +162,6 @@ class ModelsViewModel(app: Application) : AndroidViewModel(app) {
     fun importModel(type: ModelType, uri: Uri) {
         _busy.value = type
         viewModelScope.launch {
-            // 文件复制 + JNI 均为阻塞 IO, 不能跑在主线程
             // File copy + JNI are blocking IO and must not run on the main thread
             val result = withContext(Dispatchers.IO) { sharpApp.modelStore.importModel(type, uri) }
             _message.value = if (result.isSuccess) MsgKey.k(MsgKey.MSG_IMPORT_OK, modelName(type))
@@ -167,7 +173,6 @@ class ModelsViewModel(app: Application) : AndroidViewModel(app) {
     fun compileModel(type: ModelType) {
         _busy.value = type
         viewModelScope.launch {
-            // nativeInit / compileDlc 是阻塞 JNI (编译可能数十秒), 必须在 IO 线程
             // nativeInit / compileDlc are blocking JNI calls (compilation can take tens of seconds); must run on the IO thread
             val result = withContext(Dispatchers.IO) {
                 val initResult = kotlin.runCatching { sharpApp.pipelineManager.ensureQnnInitialized() }
@@ -183,7 +188,6 @@ class ModelsViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    /** 取消编译: 通知 native 中断并放弃本次编译结果 */
     /** Cancels compilation: asks native to abort and discards the in-progress result. */
     fun cancelCompile(type: ModelType) {
         sharpApp.modelStore.cancelCompile(type)
@@ -201,7 +205,6 @@ class ModelsViewModel(app: Application) : AndroidViewModel(app) {
 
     fun clearMessage() { _message.value = null }
 
-    /** 重新扫描模型目录 (进入模型页时调用), 目录为权威来源 */
     /** Re-scans the model directory (called on entry); the directory is the source of truth. */
     fun scanModels() {
         viewModelScope.launch(Dispatchers.IO) { sharpApp.modelStore.scanModelDirectory() }
@@ -220,11 +223,9 @@ fun ModelsScreen(
     val downloading by vm.downloading
     val context = LocalContext.current
 
-    // 每次切换到模型选项卡时重新扫描目录 (目录为权威来源, 自动识别 .bin/.dlc)
     // Re-scan the directory on every visit; the directory is the source of truth (.bin/.dlc auto-detected)
     LaunchedEffect(Unit) { vm.scanModels() }
 
-    // 导入/编译/删除结果 → Snackbar (短时长, 避免长时间占据底部; 键在此解析为当前语言)
     // Import/compile/remove result -> snackbar (short duration so it does not linger; keys resolved in the current language)
     LaunchedEffect(message) {
         message?.let { msg ->
@@ -245,7 +246,7 @@ fun ModelsScreen(
             )
         }
 
-        // ====== 预转换模型下载 (P2P 分块并行) ======
+        // ======  ======
         // ====== Pre-converted model download (P2P chunked parallel) ======
         item {
             Card(
@@ -274,30 +275,51 @@ fun ModelsScreen(
                     }
 
                     if (downloading) {
-                        // 下载进度 / Download progress
-                        downloadProgress?.let { (fileName, progress) ->
-                            val (current, total) = progress
-                            Text(
-                                text = stringResource(R.string.models_download_downloading, fileName, current, total),
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.primary
-                            )
-                            LinearProgressIndicator(
-                                progress = { current.toFloat() / total },
-                                modifier = Modifier.fillMaxWidth()
-                            )
+                        // Download progress
+                        downloadProgress?.let { dp ->
+                            if (dp.totalBytes > 0L) {
+                                val rawProgress = dp.downloadedBytes.toFloat() / dp.totalBytes
+                                val animatedProgress by animateFloatAsState(
+                                    targetValue = rawProgress,
+                                    animationSpec = spring(dampingRatio = 0.6f, stiffness = 100f),
+                                    label = "downloadProgress"
+                                )
+                                Text(
+                                    text = stringResource(R.string.models_download_downloading, dp.fileName),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                                LinearProgressIndicator(
+                                    progress = { animatedProgress },
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                            } else {
+                                // HEAD phase: fetching file sizes, show indeterminate
+                                Text(
+                                    text = stringResource(R.string.models_download_preparing),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                                LinearProgressIndicator(
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                            }
                         }
 
-                        OutlinedButton(
+                        Button(
                             onClick = { vm.cancelDownload() },
-                            modifier = Modifier.fillMaxWidth()
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = MaterialTheme.colorScheme.errorContainer,
+                                contentColor = MaterialTheme.colorScheme.onErrorContainer
+                            )
                         ) {
                             Icon(Icons.Filled.Cancel, contentDescription = null, modifier = Modifier.size(18.dp))
                             Spacer(Modifier.size(Spacing.sm))
                             Text(stringResource(R.string.models_download_cancel))
                         }
                     } else {
-                        // 下载按钮 / Download button
+                        // Download button
                         Button(
                             onClick = { vm.startDownload() },
                             modifier = Modifier.fillMaxWidth()
@@ -311,7 +333,6 @@ fun ModelsScreen(
             }
         }
 
-        // 是否有模型正在编译 (编译期间其余模型的编译按钮禁用, 同一时刻只允许一个编译任务)
         // Any model compiling? (while compiling, other compile buttons are disabled so only one compile runs at a time)
         val anyCompiling = models.values.any { it.status == ModelStatus.COMPILING }
 
@@ -330,7 +351,6 @@ fun ModelsScreen(
     }
 }
 
-/** 单个模型槽位卡片 */
 /** A single model slot card. */
 @Composable
 private fun ModelSlotCard(
@@ -343,7 +363,6 @@ private fun ModelSlotCard(
     onCancelCompile: () -> Unit,
     onRemove: () -> Unit
 ) {
-    // 文件选择器 (支持 .bin / .dlc)
     // File picker (.bin / .dlc)
     val filePicker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
@@ -361,7 +380,6 @@ private fun ModelSlotCard(
         )
     ) {
         Column(modifier = Modifier.padding(Spacing.lg), verticalArrangement = Arrangement.spacedBy(Spacing.sm)) {
-            // 标题行: 类型 + 状态标签
             // Title row: type + status chip
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
@@ -373,7 +391,6 @@ private fun ModelSlotCard(
                 StatusChip(status = status)
             }
 
-            // 详情
             // Details
             if (entry != null) {
                 InfoLine(stringResource(R.string.models_file_name), entry.sourceName)
@@ -388,7 +405,6 @@ private fun ModelSlotCard(
                 )
             }
 
-            // 编译中: 显示进度提示 + 取消按钮
             // Compiling: progress hints + cancel button
             if (isCompiling) {
                 Card(
@@ -419,7 +435,6 @@ private fun ModelSlotCard(
                                 modifier = Modifier.weight(1f)
                             )
                         }
-                        // 不确定进度条 (native graphFinalize 无法报告进度)
                         // Indeterminate progress bar (native graphFinalize reports no progress)
                         LinearProgressIndicator(
                             modifier = Modifier.fillMaxWidth().height(4.dp),
@@ -446,13 +461,11 @@ private fun ModelSlotCard(
                     }
                 }
             } else {
-                // 操作按钮 (非编译中状态)
                 // Action buttons (not compiling)
                 Column(
                     modifier = Modifier.fillMaxWidth(),
                     verticalArrangement = Arrangement.spacedBy(Spacing.sm)
                 ) {
-                    // 导入按钮
                     // Import button
                     OutlinedButton(
                         onClick = { filePicker.launch("*/*") },
@@ -464,7 +477,6 @@ private fun ModelSlotCard(
                         Text(stringResource(R.string.models_import))
                     }
 
-                    // 编译按钮
                     // Compile button
                     val canCompile = entry != null &&
                             entry.format == com.sharp.qnn.data.ModelFormat.DLC &&
@@ -479,7 +491,6 @@ private fun ModelSlotCard(
                         Text(stringResource(R.string.models_compile))
                     }
 
-                    // 删除按钮
                     // Remove button
                     OutlinedButton(
                         onClick = onRemove,
@@ -497,7 +508,6 @@ private fun ModelSlotCard(
                     }
                 }
 
-                // 编译期间: 其余模型按钮禁用原因提示 (独立一行, 避免挤压按钮/撑高卡片)
                 // Locked reason while another model compiles (its own line so buttons stay compact)
                 if (compileLocked) {
                     Text(
@@ -514,13 +524,12 @@ private fun ModelSlotCard(
 /**
  * 状态标签: 使用 MD3 tonal container 配对色 (容器色 + 内容色),
  * Status chip: uses MD3 tonal container pairs (container + on-container colors),
- * 而非单一文字色 + 中性背景, 提供更清晰的状态视觉反馈。
  * instead of plain text color on a neutral background, for clearer state feedback.
  *
- * - 已编译   → tertiaryContainer / onTertiaryContainer
- * - 未编译   → secondaryContainer / onSecondaryContainer
- * - 编译中   → primaryContainer / onPrimaryContainer
- * - 未导入   → surfaceContainerHigh / onSurfaceVariant
+ * onTertiaryContainer
+ * onSecondaryContainer
+ * onPrimaryContainer
+ * onSurfaceVariant
  */
 @Composable
 private fun StatusChip(status: ModelStatus) {

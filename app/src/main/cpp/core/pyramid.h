@@ -2,7 +2,7 @@
  * pyramid.h — 图像金字塔: bilinear 下采样 1536->768->384
  * pyramid.h — image pyramid: bilinear downsampling 1536->768->384
  *
- *   PyTorch 参考: F.interpolate(x, scale_factor=0.5/0.25, mode="bilinear", align_corners=False)
+ *   0.25, mode="bilinear", align_corners=False)
  *   PyTorch reference: F.interpolate(x, scale_factor=0.5/0.25, mode="bilinear", align_corners=False)
  *   输入布局: NCHW
  *   Input layout: NCHW
@@ -24,10 +24,10 @@ extern "C" {
  *              Output x1 (768) — optional
  *  @param x2    输出 x2 (384) — 可选
  *              Output x2 (384) — optional
- *  @param batch 批次 / batch
- *  @param C     通道数 / channel count
- *  @param H     输入高 (1536) / input height (1536)
- *  @param W     输入宽 (1536) / input width (1536)
+ *  batch
+ *  channel count
+ *  input height (1536)
+ *  input width (1536)
  *
  *  注意: 所有输出 buffer 需要调用方预先分配。
  *  Note: all output buffers must be pre-allocated by the caller.

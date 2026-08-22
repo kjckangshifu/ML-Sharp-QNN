@@ -15,27 +15,26 @@ import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 
 /**
- * 日志记录器: 通过 logcat 流实时抓取**本进程**日志, 实时写入下载目录 sharp_log/。
+ * 。
  * Log recorder: captures **this process** logcat output in real time and
  * writes it into the Download/sharp_log/ directory.
  *
  * - 实时写入: 每行即写即 flush (应用异常退出也不遗漏尾部日志)
  * - Real-time writes: each line is flushed immediately, so even an abrupt
  *   process exit does not lose the trailing log lines.
- * - 存储: MediaStore Downloads 集合 (RELATIVE_PATH = Download/sharp_log), 无需权限
+ * sharp_log), 无需权限
  * - Storage: MediaStore Downloads collection (RELATIVE_PATH = Download/sharp_log),
  *   no runtime permission needed.
  * - 每次会话一个文件: sharp_log_<yyyyMMdd_HHmmss>.log
  * - One file per session: sharp_log_<yyyyMMdd_HHmmss>.log
  *
- * 生命周期由 [start] / [stop] 控制 (通常由 [com.sharp.qnn.service.LogRecorderService]
+ * [stop] 控制 (通常由 [com.sharp.qnn.service.LogRecorderService]
  * 驱动): 开关打开时立即开始, 开关关闭时停止。应用进程存活期间不依赖 Activity 生命周期。
  * Lifecycle is driven by [start] / [stop] (usually through
  * [com.sharp.qnn.service.LogRecorderService]): recording begins as soon as the
  * toggle is enabled and stops when it is disabled. It does not depend on the
  * Activity lifecycle while the process is alive.
  *
- * 采集机制:
  * Collection mechanism:
  * - 不能用 `logcat -T <时间戳>` 流式: 非 root 应用 (per-UID 读者) 的流式连接会被
  *   logd 主动断开 (logcat 打印 "Unexpected EOF!" 退出), 而 dump 模式 (-d) 正常返回。
@@ -51,7 +50,6 @@ import java.util.concurrent.atomic.AtomicLong
  * - 会话开始时刻之前的历史日志由 reader 按时间戳丢弃。
  * - Log lines older than the session start are dropped by the reader via timestamps.
  *
- * 实现注意:
  * Implementation notes:
  * - 会话用单调递增的 [sessionId] 标识, [stop] 只终止"当前最新会话";
  *   旧 reader 线程自然结束时 (finally) 不会误杀之后开启的新会话。
@@ -68,7 +66,6 @@ object LogRecorder {
 
     private const val TAG = "SharpLogRec"
 
-    /** 轮询抓取间隔 (毫秒) */
     /** Poll interval in milliseconds */
     private const val POLL_INTERVAL_MS = 500L
 
@@ -76,26 +73,21 @@ object LogRecorder {
     private val sessionId = AtomicLong(0)
     private var reader: Thread? = null
 
-    /** 当前会话写入器 (跨线程可见; 置 null 只在会话终结时发生) */
     /** Current session writer (visible across threads; nulled only at session end) */
     @Volatile
     private var writer: BufferedWriter? = null
 
-    /** 当前会话的 logcat 子进程 (reader 线程内管理) */
     /** logcat child process of the current session (managed in the reader thread) */
     @Volatile
     private var process: Process? = null
 
-    /** 会话开始时刻 (毫秒), reader 据此丢弃历史日志 */
     /** Session start time (ms); the reader drops older lines accordingly */
     @Volatile
     private var sessionStartMillis = 0L
 
-    /** 是否正在记录 */
     /** Whether recording is active */
     fun isRunning(): Boolean = running.get()
 
-    /** 开始记录: 立即创建日志文件并启动 logcat 读取线程 (幂等, 已在记录时忽略) */
     /** Start recording: create the log file and launch the logcat reader thread (idempotent) */
     fun start(context: Context) {
         if (!running.compareAndSet(false, true)) return
@@ -135,11 +127,9 @@ object LogRecorder {
             return
         }
 
-        // 会话起始时刻 (threadtime 时间戳格式), 用于过滤历史日志
         // Session start time (threadtime stamp format), used to filter historical lines
         sessionStartMillis = stampMillis(nowStamp()) ?: System.currentTimeMillis()
 
-        // 头部信息
         // Header line
         writeLine("===== SharpQNN log session started " +
                 SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date()) +
@@ -148,14 +138,12 @@ object LogRecorder {
         reader = launchReader(id)
     }
 
-    /** 停止当前最新会话: 终止 logcat 进程并关闭文件 (幂等; 旧 reader 线程结束后不会误杀新会话) */
     /** Stop the latest session: kill the logcat process and close the file (idempotent) */
     fun stop() {
         if (!running.compareAndSet(true, false)) return
         finishSession()
     }
 
-    /** 由 reader 线程自然结束时调用, 仅终止它自己所属的会话 */
     /** Called when a reader thread exits naturally; ends only its own session */
     private fun stopSession(id: Long) {
         if (sessionId.get() != id) return
@@ -167,7 +155,6 @@ object LogRecorder {
         writeLine("===== SharpQNN log session ended " +
                 SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date()) + " =====")
         runCatching { process?.destroy() }
-        // 同一把锁下 close, 与 writeLine 互斥, 避免写已关闭流
         // Close under the same lock as writeLine so a closed stream is never written
         val w = writer
         if (w != null) synchronized(w) { runCatching { w.close() } }
@@ -183,7 +170,7 @@ object LogRecorder {
         running.set(false)
     }
 
-    // ====== 内部: 采集线程 ======
+    // ======  ======
     // ====== Internals: collection thread ======
 
     /**
@@ -209,7 +196,6 @@ object LogRecorder {
             try {
                 while (running.get() && sessionId.get() == myId) {
                     try {
-                        // last+1ms: 跳过上一轮已写过的最后一行 (避免空闲时重复重放同一时间戳的行)
                         // last+1ms: skip the final line of the previous snapshot to
                         // avoid replaying the same timestamp during idle periods
                         val since = stampString(last + 1)
@@ -247,20 +233,19 @@ object LogRecorder {
         return t
     }
 
-    // ====== 内部: 时间戳 ======
+    // ======  ======
     // ====== Internals: timestamps ======
 
     private fun nowStamp(): String =
         SimpleDateFormat("MM-dd HH:mm:ss.SSS", Locale.US).format(Date())
 
-    /** 毫秒 → "MM-dd HH:mm:ss.SSS" (logcat -T 参数格式) */
     /** Milliseconds → "MM-dd HH:mm:ss.SSS" (logcat -T argument format) */
     private fun stampString(ms: Long): String =
         SimpleDateFormat("MM-dd HH:mm:ss.SSS", Locale.US).format(Date(ms))
 
     /**
      * 解析 threadtime 行首时间戳 "MM-dd HH:mm:ss.SSS" (18 字符) 为毫秒。
-     * 非该格式的行 (分隔线/logcat 自身输出) 返回 null。
+     * logcat 自身输出) 返回 null。
      * Parse a "MM-dd HH:mm:ss.SSS" (18 chars) threadtime line prefix into
      * milliseconds. Lines not matching the format (separators, logcat's own
      * output) return null.
@@ -287,10 +272,8 @@ object LogRecorder {
         return ms
     }
 
-    // ====== 内部 ======
-    // ====== Internals ======
+        // ====== Internals ======
 
-    /** 同步写一行并立即 flush (锁局部引用, 与 close 互斥; 失败静默, 仅丢失该行) */
     /** Write one line and flush synchronously (local lock reference, mutually
      * exclusive with close; failures are silent and only drop that line) */
     private fun writeLine(line: String) {

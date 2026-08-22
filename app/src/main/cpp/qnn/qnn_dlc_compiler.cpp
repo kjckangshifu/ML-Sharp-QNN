@@ -1,6 +1,4 @@
-// qnn_dlc_compiler.cpp — DLC 设备端编译器实现
 // qnn_dlc_compiler.cpp — on-device DLC compiler implementation
-// 从 DLC 文件编译生成 context binary (.bin)
 // Compiles a DLC file into a context binary (.bin)
 #include "qnn_dlc_compiler.h"
 
@@ -32,11 +30,9 @@ namespace qnn {
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
 
-// 编译被取消时的返回值 (区分于真实错误码)
 // Return value when the compile is cancelled (distinct from real error codes)
 static const int COMPILE_CANCELLED = -100;
 
-// 释放 systemDlcComposeGraphs 分配的 graphInfos 内存 (兼容 V1/V2/V3 三种版本)
 // Frees the graphInfos memory allocated by systemDlcComposeGraphs (handles V1/V2/V3)
 static void freeGraphInfos(QnnSystemContext_GraphInfo_t* graphInfos, uint32_t numGraphs) {
     if (!graphInfos) return;
@@ -58,16 +54,14 @@ static void freeGraphInfos(QnnSystemContext_GraphInfo_t* graphInfos, uint32_t nu
     free(graphInfos);
 }
 
-// ============== 构造 / 析构 ==============
+// 析构 ==============
 // ============== Construction / destruction ==============
 
 DlcCompiler::DlcCompiler() : m_dlcHandle(nullptr), m_sysInterfaceValid(false),
                              m_cancelRequested(false) {}
 
 DlcCompiler::~DlcCompiler() {
-    // 如果 compile 失败或未正常结束, m_dlcHandle 可能未释放
     // If compile failed or did not finish normally, m_dlcHandle may still be held
-    // 使用保存的 system interface 副本释放, 不依赖 runtime 存活 (避免悬垂指针)
     // release it via the saved system interface copy, independent of runtime lifetime (avoids dangling pointers)
     if (m_dlcHandle && m_sysInterfaceValid) {
         m_sysInterface.QNN_SYSTEM_INTERFACE_VER_NAME.systemDlcFree(m_dlcHandle);
@@ -76,7 +70,7 @@ DlcCompiler::~DlcCompiler() {
     }
 }
 
-// ============== compile: 编译 DLC → context binary ==============
+// ==============  ==============
 // ============== compile: compile a DLC into a context binary ==============
 
 int DlcCompiler::compile(HtpRuntime& runtime, const std::string& dlcPath,
@@ -86,25 +80,20 @@ int DlcCompiler::compile(HtpRuntime& runtime, const std::string& dlcPath,
         return -1;
     }
 
-    // 开始编译前复位取消标志
     // Reset the cancellation flag before starting
     m_cancelRequested.store(false, std::memory_order_relaxed);
 
-    // 保存 system interface 副本 (供析构函数在异常情况下释放 m_dlcHandle)
     // Save a copy of the system interface (so the destructor can free m_dlcHandle in abnormal cases)
     m_sysInterface = runtime.m_shared->qnnSystemInterface;
     m_sysInterfaceValid = true;
 
-    // 通过 friend 访问 HtpRuntime 内部 (共享状态)
     // Access HtpRuntime internals via friend (shared state)
     auto& qnn = runtime.m_shared->qnnInterface.QNN_INTERFACE_VER_NAME;
     auto& sys = runtime.m_shared->qnnSystemInterface.QNN_SYSTEM_INTERFACE_VER_NAME;
     Qnn_BackendHandle_t backend = runtime.m_shared->backendHandle;
     Qnn_DeviceHandle_t device = runtime.m_shared->deviceHandle;
 
-    // 取消时统一清理: 释放资源 (输出文件在全部取消点之后才写入,
     // Unified cleanup on cancel: release resources (the output file is only written after every cancel
-    // 此处删除 outBinPath 只会误删上次编译的旧产物, 故不碰文件)
     // check point, so deleting outBinPath here would only remove the previous build's artifact, so leave the file alone)
     auto cleanupOnCancel = [&](Qnn_ContextHandle_t context) -> int {
         if (m_dlcHandle) {
@@ -132,7 +121,6 @@ int DlcCompiler::compile(HtpRuntime& runtime, const std::string& dlcPath,
         return -2;
     }
 
-    // 取消检查
     // Cancellation check
     if (m_cancelRequested.load()) return cleanupOnCancel(context);
 
@@ -146,13 +134,11 @@ int DlcCompiler::compile(HtpRuntime& runtime, const std::string& dlcPath,
         return -3;
     }
 
-    // 取消检查
     // Cancellation check
     if (m_cancelRequested.load()) return cleanupOnCancel(context);
 
     // 3. systemDlcComposeGraphs: 单次 compose (不带 graphConfigs, 官方 SampleApp 同款)
     // 3. systemDlcComposeGraphs: single compose (no graphConfigs, same as the official SampleApp)
-    //    返回的 graphInfos 自带 graphName; HTP 优化配置随后经 graphSetConfig 下发
     //    the returned graphInfos carry the graph names; HTP optimization config is pushed later via graphSetConfig
     if (progressCb) progressCb(0, 1, elapsedMs(), "Composing graphs from DLC");
 
@@ -177,16 +163,13 @@ int DlcCompiler::compile(HtpRuntime& runtime, const std::string& dlcPath,
 
     LOGI("Composed %u graphs from DLC", numGraphs);
 
-    // 取消检查
     // Cancellation check
     if (m_cancelRequested.load()) {
         freeGraphInfos(graphInfos, numGraphs);
         return cleanupOnCancel(context);
     }
 
-    // HTP graph 编译优化配置 (QnnHtpGraph_CustomConfig_t, 以 UNKNOWN 结束)
     // HTP graph compilation optimization config (QnnHtpGraph_CustomConfig_t, terminated by UNKNOWN)
-    // 经 QnnGraph_setConfig(QNN_GRAPH_CONFIG_OPTION_CUSTOM) 在 graphFinalize 前下发
     // pushed via QnnGraph_setConfig (QNN_GRAPH_CONFIG_OPTION_CUSTOM) before graphFinalize
     QnnHtpGraph_CustomConfig_t htpOptimizationFlags[3]{};
     htpOptimizationFlags[0].option = QNN_HTP_GRAPH_CONFIG_OPTION_OPTIMIZATION;
@@ -215,7 +198,6 @@ int DlcCompiler::compile(HtpRuntime& runtime, const std::string& dlcPath,
     // 4. 对每个 graph: graphRetrieve → graphSetConfig(HTP 优化) → graphFinalize (触发编译)
     // 4. Per graph: graphRetrieve -> graphSetConfig (HTP optimization) -> graphFinalize (triggers compilation)
     for (uint32_t i = 0; i < numGraphs; i++) {
-        // 取消检查 (graphFinalize 为阻塞调用, 取消在该调用返回后立即生效)
         // Cancellation check (graphFinalize is blocking; cancellation takes effect right after it returns)
         if (m_cancelRequested.load()) {
             freeGraphInfos(graphInfos, numGraphs);
@@ -250,7 +232,6 @@ int DlcCompiler::compile(HtpRuntime& runtime, const std::string& dlcPath,
             return -5;
         }
 
-        // graphSetConfig: 下发 HTP 优化配置 (必须在 graphFinalize 之前)
         // graphSetConfig: push the HTP optimization config (must happen before graphFinalize)
         QnnGraph_Config_t graphConfigs[2]{};
         graphConfigs[0].option = QNN_GRAPH_CONFIG_OPTION_CUSTOM;
@@ -267,7 +248,6 @@ int DlcCompiler::compile(HtpRuntime& runtime, const std::string& dlcPath,
             return -6;
         }
 
-        // graphFinalize (触发实际编译, 可能耗时较长)
         // graphFinalize (triggers the actual compilation; may take a while)
         if (QNN_SUCCESS != qnn.graphFinalize(graphHandle, nullptr, nullptr)) {
             LOGE("Failed to finalize graph '%s'", gname ? gname : "");
@@ -281,7 +261,6 @@ int DlcCompiler::compile(HtpRuntime& runtime, const std::string& dlcPath,
         LOGI("Finalized graph %u/%u: %s", i + 1, numGraphs, gname ? gname : "");
     }
 
-    // 释放 graphInfos (systemDlcComposeGraphs 分配的内存, 由调用方释放)
     // Free graphInfos (memory allocated by systemDlcComposeGraphs, freed by the caller)
     freeGraphInfos(graphInfos, numGraphs);
     graphInfos = nullptr;
@@ -290,7 +269,6 @@ int DlcCompiler::compile(HtpRuntime& runtime, const std::string& dlcPath,
         progressCb(numGraphs, numGraphs, elapsedMs(), "Compilation complete, extracting binary");
     }
 
-    // 取消检查
     // Cancellation check
     if (m_cancelRequested.load()) return cleanupOnCancel(context);
 
@@ -328,7 +306,6 @@ int DlcCompiler::compile(HtpRuntime& runtime, const std::string& dlcPath,
     LOGI("Context binary extracted: %llu bytes",
          (unsigned long long)writtenSize);
 
-    // 取消检查 (未写入文件, 直接清理)
     // Cancellation check (the file was not written yet, just clean up)
     if (m_cancelRequested.load()) return cleanupOnCancel(context);
 

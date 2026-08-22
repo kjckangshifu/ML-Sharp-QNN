@@ -21,12 +21,11 @@ import java.util.Locale
  * - 跨层传递的文本一律使用 ASCII 键 (见 [MsgKey]), 需要参数时以 '|' 分隔: key|arg1|arg2
  * - Text crossing layers always uses ASCII keys (see [MsgKey]); parameters are
  *   appended with '|': key|arg1|arg2
- * - 无对应键的原始文本 (如 native 的 "patch 21/35") 原样透传
+ * 35") 原样透传
  * - Raw text without a key (e.g. native "patch 21/35") passes through as-is
  */
 object LocaleUtil {
 
-    /** 用户语言 → Android Locale (SYSTEM 取设备当前 locale) */
     /** User language → Android Locale (SYSTEM uses the device locale) */
     fun locale(language: Language): Locale = when (language) {
         Language.ZH -> Locale.SIMPLIFIED_CHINESE
@@ -35,7 +34,6 @@ object LocaleUtil {
             Resources.getSystem().configuration.locales[0] ?: Locale.getDefault()
     }
 
-    /** 用指定语言包装 Context (resources 随语言切换; SYSTEM 时原样返回) */
     /** Wrap a Context for the given language (resources follow it; SYSTEM passes through) */
     fun wrap(base: Context, language: Language): Context {
         if (language == Language.SYSTEM) return base
@@ -44,22 +42,19 @@ object LocaleUtil {
         return base.createConfigurationContext(config)
     }
 
-    /** 非 Composable 场景的本地化字符串 (需已按语言包装的 ctx, 见 [wrap]) */
     /** Localized string for non-composable call sites (ctx must be wrapped, see [wrap]) */
     fun string(ctx: Context, @StringRes res: Int, vararg args: Any): String =
         if (args.isEmpty()) ctx.getString(res) else ctx.getString(res, *args)
 
-    /** 模型的本地化名称 (用于非 Composable 消息构造) */
     /** Localized model name (for non-composable message construction) */
     fun modelName(ctx: Context, type: ModelType): String = string(ctx, type.nameRes)
 }
 
-/** 消息键: native (sharp_jni.cpp) 与 Kotlin 共用, 与 values/strings.xml 中 msg/err 资源一一对应 */
 /** Message keys shared by native (sharp_jni.cpp) and Kotlin; each maps to a strings.xml msg/err entry */
 object MsgKey {
     const val SEP = "|"
 
-    // native cbError 键 / native cbError keys
+    // native cbError keys
     const val ERR_PREP_IMAGE_FAILED = "err_prep_image_failed"
     const val ERR_PRE_FAILED = "err_pre_failed"
     const val ERR_PE_NOT_LOADED = "err_pe_not_loaded"
@@ -86,7 +81,7 @@ object MsgKey {
     const val ERR_DELTA_OUTPUT_MISSING = "err_delta_output_missing"
     const val ERR_POINTCLOUD_FAILED = "err_pointcloud_failed"
 
-    // Kotlin 侧键 / Kotlin-side keys
+    // Kotlin-side keys
     const val ERR_COPY_IMAGE_FAILED = "err_copy_image_failed"
     const val ERR_PREP_NULL = "err_prep_null"
     const val ERR_REST_A_FAILED = "err_rest_a_failed"
@@ -127,22 +122,25 @@ object MsgKey {
     const val MSG_CACHE_EMPTY = "msg_cache_empty"
     const val MSG_DELETED = "msg_deleted"
 
-    // 模型下载 / Model download
+    // Model download
     const val MSG_DOWNLOAD_COMPLETE = "msg_download_complete"
     const val ERR_DOWNLOAD_FAIL = "err_download_fail"
 
-    // 进度详情键 / progress-detail keys
+    // progress-detail keys
+    const val DETAIL_INIT_QNN = "detail_init_qnn"
+    const val DETAIL_LOADING_MODEL = "detail_loading_model"
     const val DETAIL_COMPILING = "detail_compiling"
     const val DETAIL_COMPILED = "detail_compiled"
     const val DETAIL_CANCELLED = "detail_cancelled"
+    const val STAGE_PLY_PRUNE = "stage_ply_prune"
+    const val STAGE_PLY_SOR = "stage_ply_sor"
+    const val STAGE_PLY_KNN = "stage_ply_knn"
 
-    /** 组装带参键: key|arg1|arg2 */
     /** Build a parameterized key: key|arg1|arg2 */
     fun k(key: String, vararg args: Any): String =
         if (args.isEmpty()) key else "$key$SEP${args.joinToString(SEP)}"
 }
 
-/** 消息键 → 字符串资源 id 映射 (键与 values/strings.xml 的 name 一致) */
 /** Message-key → string-resource map (keys match the names in values/strings.xml) */
 internal val messageResIds: Map<String, Int> = mapOf(
     MsgKey.ERR_PREP_IMAGE_FAILED to R.string.err_prep_image_failed,
@@ -211,15 +209,19 @@ internal val messageResIds: Map<String, Int> = mapOf(
     MsgKey.MSG_DELETED to R.string.msg_deleted,
     MsgKey.MSG_DOWNLOAD_COMPLETE to R.string.msg_download_complete,
     MsgKey.ERR_DOWNLOAD_FAIL to R.string.err_download_fail,
+    MsgKey.DETAIL_INIT_QNN to R.string.detail_init_qnn,
+    MsgKey.DETAIL_LOADING_MODEL to R.string.detail_loading_model,
     MsgKey.DETAIL_COMPILING to R.string.detail_compiling,
     MsgKey.DETAIL_COMPILED to R.string.detail_compiled,
-    MsgKey.DETAIL_CANCELLED to R.string.detail_cancelled
+    MsgKey.DETAIL_CANCELLED to R.string.detail_cancelled,
+    MsgKey.STAGE_PLY_PRUNE to R.string.stage_ply_prune,
+    MsgKey.STAGE_PLY_SOR to R.string.stage_ply_sor,
+    MsgKey.STAGE_PLY_KNN to R.string.stage_ply_knn
 )
 
 /**
  * 本地化消息解析: 键 (或键|arg1|arg2) → stringResource。
  * Localized message resolution: a key (or key|arg1|arg2) → stringResource.
- * 无对应键的原始文本原样返回。
  * Raw text without a matching key is returned as-is.
  */
 @Composable
@@ -234,7 +236,6 @@ fun i18nMessage(raw: String): String {
 /**
  * 非 Composable 场景的消息解析 (ctx 需已按语言包装, 见 [LocaleUtil.wrap])。
  * Non-composable message resolution (ctx must be locale-wrapped, see [LocaleUtil.wrap]).
- * 键找不到或输入非键文本时原样返回。
  * Returns the raw input when the key is unknown or the text is not a key.
  */
 fun resolveMessage(ctx: Context, keyOrRaw: String): String {
