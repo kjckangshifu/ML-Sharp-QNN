@@ -11,6 +11,8 @@ import java.net.HttpURLConnection
 import java.net.URL
 import java.util.concurrent.atomic.AtomicLong
 
+import com.sharp.qnn.pipeline.QnnJni
+
 /**
  * 预转换模型下载器 (P2P 分块并行下载)。
  * Pre-converted model downloader (P2P chunked parallel download).
@@ -148,6 +150,18 @@ class ModelDownloader(private val context: Context) {
 
             val url = getModelUrl(source, fileName)
             val destFile = File(dlcDir, fileName)
+
+            // Skip if already imported and valid
+            if (destFile.exists() && destFile.length() > 0) {
+                val validateErr = QnnJni.validateModelFile(destFile.absolutePath, "dlc")
+                if (validateErr == null) {
+                    successCount++
+                    cumulativeBytes.addAndGet(fileSizes[index])
+                    continue
+                }
+                // Corrupted file, delete and re-download
+                destFile.delete()
+            }
 
             try {
                 downloadFile(url, destFile) { fileBytes ->
