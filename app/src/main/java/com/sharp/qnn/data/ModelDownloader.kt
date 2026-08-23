@@ -224,6 +224,15 @@ class ModelDownloader(private val context: Context) {
         // Small files (< 4MB) or unknown size → simple streaming download
         if (contentLength <= 0 || contentLength < CHUNK_THRESHOLD) {
             downloadSimple(urlStr, destFile, onBytesProgress)
+            if (contentLength > 0) {
+                val actualSize = destFile.length()
+                if (actualSize != contentLength.toLong()) {
+                    destFile.delete()
+                    throw RuntimeException(
+                        "Download incomplete: expected $contentLength bytes, got $actualSize"
+                    )
+                }
+            }
             return@withContext
         }
 
@@ -232,6 +241,17 @@ class ModelDownloader(private val context: Context) {
         if (!chunkedSuccess) {
             // Server doesn't support Range (returned 200 instead of 206), fall back to streaming
             downloadSimple(urlStr, destFile, onBytesProgress)
+        }
+
+        // Verify downloaded file size matches expected content length
+        if (contentLength > 0) {
+            val actualSize = destFile.length()
+            if (actualSize != contentLength.toLong()) {
+                destFile.delete()
+                throw RuntimeException(
+                    "Download incomplete: expected $contentLength bytes, got $actualSize"
+                )
+            }
         }
     }
 
