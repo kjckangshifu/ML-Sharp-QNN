@@ -28,7 +28,10 @@
     <string name="home_image_info">图片信息</string>
     <string name="home_image_size">尺寸: %1$s x %2$s</string>
     <string name="home_image_format">格式: %1$s</string>
-    <string name="home_image_focal">焦距: %1$s mm</string>
+    <string name="home_image_focal_label">焦距</string>
+    <string name="home_image_focal_default">默认焦距（无 EXIF 数据）</string>
+    <string name="home_image_focal_unit_mm">mm</string>
+    <string name="home_image_focal_unit_px">px</string>
     <string name="home_image_file_size">大小: %1$s</string>
     <string name="home_image_preview_cd">预览</string>
     <string name="home_image_load_failed">无法加载图片</string>

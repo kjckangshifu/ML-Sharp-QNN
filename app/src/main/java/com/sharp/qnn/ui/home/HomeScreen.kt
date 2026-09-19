@@ -38,6 +38,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
@@ -50,8 +51,12 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
@@ -72,6 +77,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
@@ -126,6 +132,84 @@ class HomeViewModel(app: Application) : AndroidViewModel(app) {
         val fileSize: Long = 0
     )
 
+    // Focal length unit for the editable field
+    enum class FocalUnit { MM, PX }
+
+    // Focal length editor state — persisted across photo changes
+    // 焦距编辑器状态 — 换图时重置
+    private val _focalValue = mutableStateOf("")          // current text in the field
+    val focalValue: State<String> = _focalValue
+    private val _focalUnit = mutableStateOf(FocalUnit.MM) // current unit
+    val focalUnit: State<FocalUnit> = _focalUnit
+    private val _focalIsManual = mutableStateOf(false)    // true when user edited the value
+    val focalIsManual: State<Boolean> = _focalIsManual
+    private var _imageWidth = 0   // for mm↔px conversion
+    private var _imageHeight = 0  // for mm↔px conversion
+
+    companion object {
+        /** 全画幅对角线 (mm) = sqrt(36² + 24²) — matches C side compute_fpx() */
+        /** Full-frame diagonal (mm) = sqrt(36² + 24²) — matches C side compute_fpx() */
+        private const val FULL_FRAME_DIAGONAL_MM = 43.2666
+        /** Default focal length when EXIF is unavailable */
+        /** 无 EXIF 数据时的默认焦距 */
+        private const val DEFAULT_FOCAL_MM = 30.0
+    }
+
+    /** Convert mm focal length to pixel focal length using image dimensions. */
+    /** 用图片尺寸把 mm 焦距转为像素焦距。 */
+    private fun mmToPx(mm: Double, w: Int, h: Int): Double {
+        if (w <= 0 || h <= 0) return mm * 1000.0  // degenerate fallback
+        val diagPx = kotlin.math.sqrt((w * w + h * h).toDouble())
+        return mm * diagPx / FULL_FRAME_DIAGONAL_MM
+    }
+
+    /** Convert pixel focal length to mm focal length using image dimensions. */
+    /** 用图片尺寸把像素焦距转为 mm 焦距。 */
+    private fun pxToMm(px: Double, w: Int, h: Int): Double {
+        if (w <= 0 || h <= 0) return px / 1000.0
+        val diagPx = kotlin.math.sqrt((w * w + h * h).toDouble())
+        return px * FULL_FRAME_DIAGONAL_MM / diagPx
+    }
+
+    /** Toggle the focal unit between mm and px, converting the displayed value in-place. */
+    /** 在 mm 和 px 之间切换焦距单位, 同时转换显示值。 */
+    fun toggleFocalUnit() {
+        val current = _focalValue.value.toDoubleOrNull() ?: return
+        val w = _imageWidth
+        val h = _imageHeight
+        if (_focalUnit.value == FocalUnit.MM) {
+            val px = mmToPx(current, w, h)
+            _focalValue.value = "%.1f".format(px)
+            _focalUnit.value = FocalUnit.PX
+        } else {
+            val mm = pxToMm(current, w, h)
+            _focalValue.value = "%.1f".format(mm)
+            _focalUnit.value = FocalUnit.MM
+        }
+    }
+
+    /** Called when the user types in the focal field. */
+    /** 用户在输入框中修改焦距时调用。 */
+    fun setFocalValue(value: String) {
+        _focalValue.value = value
+        _focalIsManual.value = true
+    }
+
+    /** Returns the user-overridden f_px, or null if the value is unchanged / invalid. */
+    /** 返回用户覆盖的像素焦距, 如果未修改或值无效则返回 null。 */
+    fun getOverrideFpx(): Float? {
+        if (!_focalIsManual.value) return null
+        val v = _focalValue.value.toDoubleOrNull() ?: return null
+        if (v <= 0) return null
+        val w = _imageWidth
+        val h = _imageHeight
+        return if (_focalUnit.value == FocalUnit.MM) {
+            mmToPx(v, w, h).toFloat()
+        } else {
+            v.toFloat()
+        }
+    }
+
     private val _imageDetails = mutableStateOf<ImageDetails?>(null)
     val imageDetails: State<ImageDetails?> = _imageDetails
 
@@ -140,6 +224,12 @@ class HomeViewModel(app: Application) : AndroidViewModel(app) {
         _imageDetails.value = null
         _exportMessage.value = null
         _exporting.value = false
+        // Reset focal length editor when switching images
+        _focalValue.value = ""
+        _focalUnit.value = FocalUnit.MM
+        _focalIsManual.value = false
+        _imageWidth = 0
+        _imageHeight = 0
 
         // Clear previous inference artifacts (excluding exported PLY) when re-selecting an image
         // Clear previous inference products and remnants when reselecting
@@ -158,8 +248,24 @@ class HomeViewModel(app: Application) : AndroidViewModel(app) {
         if (uri != null) {
             viewModelScope.launch(Dispatchers.IO) {
                 val details = loadImageDetails(uri)
-                // Publish details only if this selection is still the latest; stale results are dropped
-                if (gen == imageLoadGeneration) _imageDetails.value = details
+                // Publish details and set focal state; stale results are dropped
+                if (gen == imageLoadGeneration) {
+                    _imageDetails.value = details
+
+                    // Initialise focal editor from image info
+                    details?.let { d ->
+                        _imageWidth = d.width
+                        _imageHeight = d.height
+                        if (d.focalLength != null && d.focalLength > 0) {
+                            _focalValue.value = "%.1f".format(d.focalLength)
+                            _focalUnit.value = FocalUnit.MM
+                        } else {
+                            _focalValue.value = "%.1f".format(DEFAULT_FOCAL_MM)
+                            _focalUnit.value = FocalUnit.MM
+                        }
+                        _focalIsManual.value = false
+                    }
+                }
             }
         }
     }
@@ -193,10 +299,12 @@ class HomeViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    /** Runs the full inference pipeline. */
+    /** Runs the full inference pipeline, forwarding any user-overridden focal length. */
+    /** 启动推理管线, 如果用户覆盖了焦距则传入。 */
     fun runPipeline(imageUri: Uri) {
         viewModelScope.launch {
-            sharpApp.pipelineManager.runPipeline(imageUri)
+            val overrideFpx = getOverrideFpx()
+            sharpApp.pipelineManager.runPipeline(imageUri, overrideFpx)
         }
     }
 
@@ -401,13 +509,13 @@ fun HomeScreen(
                                                     style = MaterialTheme.typography.bodySmall,
                                                     color = MaterialTheme.colorScheme.onSecondaryContainer
                                                 )
-                                                d.focalLength?.let { f ->
-                                                    Text(
-                                                        text = stringResource(R.string.home_image_focal, "%.1f".format(f)),
-                                                        style = MaterialTheme.typography.bodySmall,
-                                                        color = MaterialTheme.colorScheme.onSecondaryContainer
-                                                    )
-                                                }
+                                                // Focal length editor with unit toggle (mm ↔ px)
+                                                FocalLengthField(
+                                                    value = vm.focalValue.value,
+                                                    unit = vm.focalUnit.value,
+                                                    onValueChange = { vm.setFocalValue(it) },
+                                                    onToggleUnit = { vm.toggleFocalUnit() }
+                                                )
                                                 if (d.fileSize > 0) {
                                                     Text(
                                                         text = stringResource(R.string.home_image_file_size, formatFileSize(d.fileSize)),
@@ -814,6 +922,71 @@ private fun ImagePreview(uri: Uri, modifier: Modifier = Modifier, targetHeightDp
                 )
             }
         }
+    }
+}
+
+/**
+ * 焦距编辑栏：带单位的 OutlinedTextField + mm/px 切换 FilterChip。
+ * Focal length editor: OutlinedTextField with mm/px unit toggle chips.
+ *
+ * 输入只允许数字与小数点, 点击未选中的单位 chips 触发转换。
+ * Input only allows digits and decimal point; tapping the unselected chip triggers conversion.
+ *
+ * @param value 当前焦距数值 (字符串)
+ * @param unit  当前单位
+ * @param onValueChange 用户输入回调
+ * @param onToggleUnit  切换单位回调
+ */
+@Composable
+private fun FocalLengthField(
+    value: String,
+    unit: HomeViewModel.FocalUnit,
+    onValueChange: (String) -> Unit,
+    onToggleUnit: () -> Unit
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(top = 2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(Spacing.xs)
+    ) {
+        OutlinedTextField(
+            value = value,
+            onValueChange = { newVal ->
+                if (newVal.isEmpty() || newVal.matches(Regex("^\\d*\\.?\\d{0,2}$"))) {
+                    onValueChange(newVal)
+                }
+            },
+            modifier = Modifier.weight(1f),
+            singleLine = true,
+            label = { Text(stringResource(R.string.home_image_focal_label)) },
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+            textStyle = MaterialTheme.typography.bodySmall,
+            colors = OutlinedTextFieldDefaults.colors(
+                focusedBorderColor = MaterialTheme.colorScheme.primary,
+                unfocusedBorderColor = MaterialTheme.colorScheme.outline,
+                focusedLabelColor = MaterialTheme.colorScheme.primary,
+                unfocusedLabelColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
+            )
+        )
+        FilterChip(
+            selected = unit == HomeViewModel.FocalUnit.MM,
+            onClick = { if (unit != HomeViewModel.FocalUnit.MM) onToggleUnit() },
+            label = { Text(stringResource(R.string.home_image_focal_unit_mm)) },
+            colors = androidx.compose.material3.FilterChipDefaults.filterChipColors(
+                selectedContainerColor = MaterialTheme.colorScheme.primary,
+                selectedLabelColor = MaterialTheme.colorScheme.onPrimary
+            )
+        )
+        FilterChip(
+            selected = unit == HomeViewModel.FocalUnit.PX,
+            onClick = { if (unit != HomeViewModel.FocalUnit.PX) onToggleUnit() },
+            label = { Text(stringResource(R.string.home_image_focal_unit_px)) },
+            colors = androidx.compose.material3.FilterChipDefaults.filterChipColors(
+                selectedContainerColor = MaterialTheme.colorScheme.primary,
+                selectedLabelColor = MaterialTheme.colorScheme.onPrimary
+            )
+        )
     }
 }
 

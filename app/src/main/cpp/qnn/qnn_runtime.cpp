@@ -7,6 +7,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <fstream>
+#include <new>
 #include <vector>
 #include <android/log.h>
 
@@ -620,6 +621,34 @@ int HtpRuntime::loadFromBinary(const std::string& binPath, std::string& graphNam
     LOGI("loadFromBinary: %s binSize=%lld bytes, 读入后 RSS=%zuKB",
          binPath.c_str(), (long long)binSize, selfVmRSS_kB());
 
+    // Pre-check: ensure there is enough memory for context creation (binary + context both resident briefly)
+    // The context memory footprint is roughly the same as the binary size; if available memory < 2.5× binSize
+    // the creation will very likely fail with OOM
+    size_t rssBefore = selfVmRSS_kB();
+    // Estimate available memory from /proc/meminfo
+    size_t memAvailKB = 0;
+    {
+        FILE* mf = fopen("/proc/meminfo", "r");
+        if (mf) {
+            char line[256];
+            while (fgets(line, sizeof(line), mf)) {
+                if (strncmp(line, "MemAvailable:", 13) == 0) {
+                    sscanf(line + 13, "%zu", &memAvailKB);
+                    break;
+                }
+            }
+            fclose(mf);
+        }
+    }
+    // Use a safety factor of 3×: binary, context, and DDR copy may coexist briefly
+    size_t estimatedPeakKB = ((size_t)binSize * 3) / 1024;
+    if (memAvailKB > 0 && memAvailKB < estimatedPeakKB) {
+        LOGE("Insufficient memory for context creation: available=%zuKB, estimated_peak=%zuKB, binSize=%lld",
+             memAvailKB, estimatedPeakKB, (long long)binSize);
+        m_data.binaryBuffer.clear();
+        return -0xE0000001;  // caller recognizes as OOM
+    }
+
     // 2. 用 systemContextCreate 创建 system context
     // 2. Create a system context via systemContextCreate
     QnnSystemContext_Handle_t sysCtxHandle = nullptr;
@@ -820,6 +849,7 @@ int HtpRuntime::execute(const std::vector<Tensor>& inputs, std::vector<Tensor>& 
                         bool keepOutputQuantized) {
     if (!m_ready || !m_graphHandle) return -1;
 
+    try {
     auto& qnn = m_shared->qnnInterface.QNN_INTERFACE_VER_NAME;
 
     uint32_t numInputs = static_cast<uint32_t>(inputs.size());
@@ -1070,6 +1100,14 @@ int HtpRuntime::execute(const std::vector<Tensor>& inputs, std::vector<Tensor>& 
     }
 
     return 0;
+
+    } catch (const std::bad_alloc& e) {
+        LOGE("execute: memory allocation failed (OOM): %s, RSS=%zuKB", e.what(), selfVmRSS_kB());
+        return -0xE0000002;
+    } catch (const std::exception& e) {
+        LOGE("execute: unexpected exception: %s", e.what());
+        return -0xE0000003;
+    }
 }
 
 // ==============  ==============

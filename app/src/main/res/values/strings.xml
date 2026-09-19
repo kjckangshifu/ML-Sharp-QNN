@@ -28,7 +28,10 @@
     <string name="home_image_info">Image Info</string>
     <string name="home_image_size">Size: %1$s × %2$s</string>
     <string name="home_image_format">Format: %1$s</string>
-    <string name="home_image_focal">Focal Length: %1$s mm</string>
+    <string name="home_image_focal_label">Focal Length</string>
+    <string name="home_image_focal_default">Default focal length (no EXIF data)</string>
+    <string name="home_image_focal_unit_mm">mm</string>
+    <string name="home_image_focal_unit_px">px</string>
     <string name="home_image_file_size">Size: %1$s</string>
     <string name="home_image_preview_cd">Preview</string>
     <string name="home_image_load_failed">Failed to load image</string>

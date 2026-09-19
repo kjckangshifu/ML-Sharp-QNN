@@ -74,10 +74,11 @@ class PipelineManager(
      * Run the full pipeline.
      * @param imageUri 用户选择的图片 URI
      * @param imageUri the image URI selected by the user
+     * @param overrideFpx optional user-overridden focal length in pixels (null = auto-detect from EXIF)
      * @return 成功与否
      * @return success/failure
      */
-    suspend fun runPipeline(imageUri: Uri): Result<Unit> = runMutex.withLock {
+    suspend fun runPipeline(imageUri: Uri, overrideFpx: Float? = null): Result<Unit> = runMutex.withLock {
         withContext(Dispatchers.IO) {
             try {
                 // Pin the language for this run (detail messages use it)
@@ -122,8 +123,8 @@ class PipelineManager(
                 // Register the callback
                 runCatching { QnnJni.setProgressCallback(this@PipelineManager) }
 
-                // 1. Initialize the QNN runtime and ensure models are ready
-                ensureReady()
+                // 1. Initialize the QNN runtime and compile any DLC models
+                ensureReadyForCompile()
 
                 // Init stage done
                 onStageComplete(PREPARE_STAGE_ID, "Initialization", System.currentTimeMillis() - pipelineStartTime)
@@ -160,7 +161,8 @@ class PipelineManager(
                     return@withContext Result.failure(IOException("runPre failed"))
                 }
 
-                // 6. Stage 2: PE inference
+                // 6. Stage 2: PE inference (load model on-demand)
+                ensureModelLoaded(ModelType.PE)
                 if (!runStage(2) { QnnJni.runPatchEncoder(workDir.absolutePath) }) {
                     fail(MsgKey.ERR_PE_INFER_FAILED)
                     return@withContext Result.failure(IOException("runPatchEncoder failed"))
@@ -171,7 +173,8 @@ class PipelineManager(
                 runCatching { QnnJni.freeModel(ModelType.PE.code) }
                 synchronized(loadedModelsLock) { loadedModels.remove(ModelType.PE) }
 
-                // 7. Stage 3: IE inference
+                // 7. Stage 3: IE inference (load model on-demand)
+                ensureModelLoaded(ModelType.IE)
                 if (!runStage(3) { QnnJni.runImageEncoder(workDir.absolutePath) }) {
                     fail(MsgKey.ERR_IE_INFER_FAILED)
                     return@withContext Result.failure(IOException("runImageEncoder failed"))
@@ -190,7 +193,8 @@ class PipelineManager(
                     return@withContext Result.failure(IOException("runMerge failed"))
                 }
 
-                // 9. Stage 5: REST Seg A (feature fusion)
+                // 9. Stage 5: REST Seg A (feature fusion, load model on-demand)
+                ensureModelLoaded(ModelType.REST_A)
                 if (!runStage(5) { QnnJni.runRestSegA(workDir.absolutePath) }) {
                     fail(MsgKey.ERR_REST_A_FAILED)
                     return@withContext Result.failure(IOException("runRestSegA failed"))
@@ -199,7 +203,8 @@ class PipelineManager(
                 runCatching { QnnJni.freeModel(ModelType.REST_A.code) }
                 synchronized(loadedModelsLock) { loadedModels.remove(ModelType.REST_A) }
 
-                // 10. Stage 6: REST Seg B (disparity estimation)
+                // 10. Stage 6: REST Seg B (disparity estimation, load model on-demand)
+                ensureModelLoaded(ModelType.REST_B)
                 if (!runStage(6) { QnnJni.runRestSegB(workDir.absolutePath) }) {
                     fail(MsgKey.ERR_REST_B_FAILED)
                     return@withContext Result.failure(IOException("runRestSegB failed"))
@@ -208,8 +213,9 @@ class PipelineManager(
                 runCatching { QnnJni.freeModel(ModelType.REST_B.code) }
                 synchronized(loadedModelsLock) { loadedModels.remove(ModelType.REST_B) }
 
-                // 11. Stage 7: REST Seg C (Gaussian increment)
-                val fpx = prepMeta?.getOrNull(0) ?: 0f
+                // 11. Stage 7: REST Seg C (Gaussian increment, load model on-demand)
+                ensureModelLoaded(ModelType.REST_C)
+                val fpx = overrideFpx ?: (prepMeta?.getOrNull(0) ?: 0f)
                 val origW = (prepMeta?.getOrNull(2) ?: 0f).toInt()
                 val origH = (prepMeta?.getOrNull(3) ?: 0f).toInt()
                 if (!runStage(7) { QnnJni.runRestSegC(workDir.absolutePath, fpx, origW) }) {
@@ -321,7 +327,7 @@ class PipelineManager(
         initialized = true
     }
 
-    private suspend fun ensureReady() {
+    private suspend fun ensureReadyForCompile() {
         ensureQnnInitialized()
 
         // Models to compile (DLC and not yet compiled)
@@ -331,14 +337,80 @@ class PipelineManager(
         }
         val total = toCompile.size
 
-        // Ensure every model is compiled and loaded
+        // Compile any DLC models that need it (but DON'T load contexts yet)
+        if (total > 0) {
+            compileStageStartTime = System.currentTimeMillis()
+            onStageStart(COMPILE_STAGE_ID, "Model Compilation")
+        }
+        for ((index, type) in toCompile.withIndex()) {
+            onProgress(
+                COMPILE_STAGE_ID,
+                index, total,
+                0,
+                MsgKey.k(MsgKey.DETAIL_COMPILING, modelName(type))
+            )
+            val compileResult = modelStore.compileModel(type)
+            if (compileResult.isFailure) {
+                throw IOException(
+                    MsgKey.k(MsgKey.ERR_MODEL_COMPILE_FAILED, modelName(type), compileResult.exceptionOrNull()?.message ?: "")
+                )
+            }
+            onProgress(
+                COMPILE_STAGE_ID,
+                index + 1, total,
+                System.currentTimeMillis() - compileStageStartTime,
+                MsgKey.k(MsgKey.DETAIL_COMPILED, modelName(type))
+            )
+        }
+        if (total > 0) {
+            onStageComplete(COMPILE_STAGE_ID, "Model Compilation", System.currentTimeMillis() - compileStageStartTime)
+        }
+    }
+
+    // Load a single model context on-demand (just before its inference stage)
+    private suspend fun ensureModelLoaded(type: ModelType) {
+        synchronized(loadedModelsLock) { if (loadedModels.contains(type)) return }
+
+        val entry: ModelEntry = modelStore.getModel(type)
+            ?: throw IllegalStateException(MsgKey.k(MsgKey.ERR_MODEL_NOT_IMPORTED, modelName(type)))
+
+        // Compile first if the DLC is not compiled yet (should already be done, but guard here)
+        if (entry.status != ModelStatus.COMPILED) {
+            val compileResult = modelStore.compileModel(type)
+            if (compileResult.isFailure) {
+                throw IOException(
+                    MsgKey.k(MsgKey.ERR_MODEL_COMPILE_FAILED, modelName(type), compileResult.exceptionOrNull()?.message ?: "")
+                )
+            }
+        }
+
+        val ready = modelStore.getModel(type) ?: throw IllegalStateException(MsgKey.k(MsgKey.ERR_MODEL_MISSING, modelName(type)))
+        val binPath = ready.runtimeBinPath
+            ?: throw IllegalStateException(MsgKey.k(MsgKey.ERR_MODEL_NO_BIN, modelName(type)))
+
+        android.util.Log.i(TAG, "Loading model on-demand: ${type.displayName} (${type.code}), binSize=${ready.fileSize}")
+        val ok = QnnJni.loadContextBinary(type.code, binPath)
+        if (!ok) throw IOException(MsgKey.k(MsgKey.ERR_MODEL_LOAD_FAILED, modelName(type)))
+        synchronized(loadedModelsLock) { loadedModels.add(type) }
+    }
+
+    // Backward compatibility: keep for standalone compilation from Models tab
+    private suspend fun ensureReady() {
+        ensureQnnInitialized()
+
+        val toCompile = ModelType.entries.filter { type ->
+            val e = modelStore.getModel(type)
+            e != null && e.format == ModelFormat.DLC && e.status != ModelStatus.COMPILED
+        }
+        val total = toCompile.size
+
         if (total > 0) {
             compileStageStartTime = System.currentTimeMillis()
             onStageStart(COMPILE_STAGE_ID, "Model Compilation")
         }
         var loadedCount = 0
         for (type in ModelType.entries) {
-            val compileIndex = toCompile.indexOf(type) // -1 = nothing to compile
+            val compileIndex = toCompile.indexOf(type)
             val alreadyLoaded = synchronized(loadedModelsLock) { loadedModels.contains(type) }
             ensureModelReady(type, compileIndex, total)
             if (!alreadyLoaded) {
