@@ -7,6 +7,7 @@
 [![License: GPL 3.0](https://img.shields.io/badge/License-GPL%203.0-blue.svg)](LICENSE)
 [![Android](https://img.shields.io/badge/Android-12%2B-green)](https://developer.android.com)
 [![Platform](https://img.shields.io/badge/Platform-Snapdragon-blue)](https://www.qualcomm.com)
+[![Bilibili](https://img.shields.io/badge/Bilibili-UP%E4%B8%BB-pink)](https://space.bilibili.com/3493284355771044)
 
 [English](README.md)
 
