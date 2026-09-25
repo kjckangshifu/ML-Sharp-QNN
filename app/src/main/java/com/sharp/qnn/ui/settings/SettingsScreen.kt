@@ -1,6 +1,8 @@
 package com.sharp.qnn.ui.settings
 
 import android.app.Application
+import android.content.Intent
+import android.net.Uri
 import android.os.Environment
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandVertically
@@ -574,6 +576,42 @@ fun SettingsScreen(vm: SettingsViewModel = viewModel()) {
                     cacheMessage?.let {
                         Text(i18nMessage(it), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
                     }
+                }
+            }
+        }
+
+        // ====== About ======
+        item {
+            val context = LocalContext.current
+            Card(
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceContainerLow
+                ),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(
+                    modifier = Modifier.fillMaxWidth().padding(Spacing.lg),
+                    verticalArrangement = Arrangement.spacedBy(Spacing.sm)
+                ) {
+                    Text(
+                        stringResource(R.string.settings_about),
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    ListItem(
+                        headlineContent = { Text(stringResource(R.string.settings_about_github)) },
+                        supportingContent = { Text("github.com/kjckangshifu/ML-Sharp-QNN") },
+                        modifier = Modifier.clickable {
+                            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/kjckangshifu/ML-Sharp-QNN")))
+                        }
+                    )
+                    ListItem(
+                        headlineContent = { Text(stringResource(R.string.settings_about_bilibili)) },
+                        supportingContent = { Text("space.bilibili.com/3493284355771044") },
+                        modifier = Modifier.clickable {
+                            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://space.bilibili.com/3493284355771044")))
+                        }
+                    )
                 }
             }
         }

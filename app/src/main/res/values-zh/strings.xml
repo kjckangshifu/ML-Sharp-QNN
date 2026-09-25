@@ -197,6 +197,9 @@
     <string name="settings_logging_desc">记录日志并实时写入 Download/sharp_log/ 目录; 开启后每次进入应用自动记录</string>
     <string name="settings_cache">缓存</string>
     <string name="settings_cache_desc">清除 APP 缓存 (推理工作目录等临时文件)，不影响模型文件与编译产物</string>
+    <string name="settings_about">关于</string>
+    <string name="settings_about_github">GitHub 项目</string>
+    <string name="settings_about_bilibili">B站主页</string>
     <string name="settings_cache_cleared">已清除 %1$s 个缓存项，释放 %2$s</string>
     <string name="settings_cache_empty">缓存已是空的</string>
     <string name="settings_clear_cache">清除缓存</string>

@@ -195,6 +195,9 @@
     <string name="settings_logging_desc">Records logs in real time into Download/sharp_log/; auto-records every time you enter the app</string>
     <string name="settings_cache">Cache</string>
     <string name="settings_cache_desc">Clears the app cache (inference work dir and temp files) without touching models or compiled artifacts</string>
+    <string name="settings_about">About</string>
+    <string name="settings_about_github">GitHub Project</string>
+    <string name="settings_about_bilibili">Bilibili</string>
     <string name="settings_cache_cleared">Cleared %1$s items, freed %2$s</string>
     <string name="settings_cache_empty">The cache is already empty</string>
     <string name="settings_clear_cache">Clear Cache</string>
