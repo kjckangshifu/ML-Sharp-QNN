@@ -598,20 +598,26 @@ fun SettingsScreen(vm: SettingsViewModel = viewModel()) {
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.SemiBold
                     )
-                    ListItem(
-                        headlineContent = { Text(stringResource(R.string.settings_about_github)) },
-                        supportingContent = { Text("github.com/kjckangshifu/ML-Sharp-QNN") },
-                        modifier = Modifier.clickable {
-                            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/kjckangshifu/ML-Sharp-QNN")))
-                        }
-                    )
-                    ListItem(
-                        headlineContent = { Text(stringResource(R.string.settings_about_bilibili)) },
-                        supportingContent = { Text("space.bilibili.com/3493284355771044") },
-                        modifier = Modifier.clickable {
-                            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://space.bilibili.com/3493284355771044")))
-                        }
-                    )
+                    OutlinedButton(
+                        onClick = {
+                            val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/kjckangshifu/ML-Sharp-QNN"))
+                            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                            context.startActivity(intent)
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(stringResource(R.string.settings_about_github))
+                    }
+                    OutlinedButton(
+                        onClick = {
+                            val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://space.bilibili.com/3493284355771044"))
+                            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                            context.startActivity(intent)
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(stringResource(R.string.settings_about_bilibili))
+                    }
                 }
             }
         }
