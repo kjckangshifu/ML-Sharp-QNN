@@ -21,16 +21,20 @@ import org.json.JSONObject
 enum class ModelType(
     val displayName: String,
     val code: String,
-    @StringRes val nameRes: Int
+    @StringRes val nameRes: Int,
+    val isRequired: Boolean = true
 ) {
     PE("Patch Encoder", "pe", R.string.model_pe),
     IE("Image Encoder", "ie", R.string.model_ie),
     REST_A("Feature Fusion", "rest_a", R.string.model_rest_a),
     REST_B("Disparity Estimation", "rest_b", R.string.model_rest_b),
-    REST_C("Gaussian Delta", "rest_c", R.string.model_rest_c);
+    REST_C("Gaussian Delta", "rest_c", R.string.model_rest_c),
+    ANYCALIB("Focal Length Estimator", "anycalib", R.string.model_anycalib, isRequired = false);
 
     companion object {
         fun fromCode(code: String): ModelType? = entries.firstOrNull { it.code == code }
+        val coreTypes: List<ModelType> get() = entries.filter { it.isRequired }
+        val extTypes: List<ModelType> get() = entries.filter { !it.isRequired }
     }
 }
 

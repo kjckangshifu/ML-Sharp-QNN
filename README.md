@@ -33,6 +33,7 @@
 - **Multi-precision model support** — import DLC models of different quantization levels
 - **One-tap model download** — download pre-converted DLC models from HuggingFace (or HF-Mirror for users in China)
 - **EXIF-aware** — reads focal length from image metadata for accurate depth estimation
+- **AI focal suggestion** — estimates focal length from photos without EXIF data, powered by [AnyCalib](https://github.com/javrtg/AnyCalib)
 - **Bilingual UI** — Chinese & English, switchable at runtime
 - **MD3 design** — follows Material Design 3 guidelines
 
@@ -142,6 +143,12 @@ You can download them directly in the app via the **Models** page, or manually:
 ```bash
 hf download kjcpc/ML-Sharp-QNN dlc/w8a16/ --local-dir ./dlc
 ```
+
+The **AnyCalib** focal-length estimation model is a separately downloadable extension:
+
+- **Repository**: 🤗 [kjcpc/anycalib-qnn-dlc](https://huggingface.co/kjcpc/anycalib-qnn-dlc)
+- **Precision**: FP16
+- **Files**: 1 DLC file (~639 MB)
 
 For users in China, the app supports **HF-Mirror** (hf-mirror.com) as an alternative download source. Switch it in Settings.
 
@@ -258,6 +265,7 @@ Upload the `dlc/w8a16/` files to HuggingFace for distribution.
 | Apple SHARP | AML-R | Original research codebase |
 | [GaussSimplify](https://github.com/3dgscloud/GaussSimplify) | GPL 3.0 | 3D Gaussian simplification |
 | [GaussForge](https://github.com/3dgscloud/GaussForge) | Apache 2.0 | Gaussian Splat I/O data types |
+| [AnyCalib](https://github.com/javrtg/AnyCalib) | Apache 2.0 | Focal length estimation |
 
 ---
 
@@ -271,6 +279,7 @@ Third-party components:
 - Qualcomm QNN SDK — Proprietary (not distributed with this project)
 - GaussSimplify — [GPL 3.0](https://github.com/3dgscloud/GaussSimplify/blob/main/LICENSE)
 - GaussForge — [Apache 2.0](https://github.com/3dgscloud/GaussForge/blob/main/LICENSE)
+- AnyCalib — [Apache 2.0](https://github.com/javrtg/AnyCalib/blob/main/LICENSE)
 
 ---
 
@@ -281,6 +290,7 @@ Third-party components:
 - [Qualcomm AI Engine Direct SDK](https://www.qualcomm.com/developer/software/qualcomm-ai-engine-direct-sdk) — QNN HTP runtime
 - [GaussSimplify](https://github.com/3dgscloud/GaussSimplify) — 3D Gaussian simplification library
 - [GaussForge](https://github.com/3dgscloud/GaussForge) — Gaussian Splat I/O library
+- [AnyCalib](https://github.com/javrtg/AnyCalib) — camera focal length estimation model (Tirado-Garín & Civera, ICCV 2025)
 
 ---
 
@@ -297,5 +307,16 @@ If you use this project in your research, please cite the original SHARP paper:
   journal    = {arXiv preprint arXiv:2512.10685},
   year       = {2025},
   url        = {https://arxiv.org/abs/2512.10685},
+}
+```
+
+And the AnyCalib model used for focal length estimation:
+
+```bibtex
+@InProceedings{tirado2025anycalib,
+  author    = {Javier Tirado-Gar{\'\i}n and Javier Civera},
+  title     = {AnyCalib: On the Edge Single-Stage Calibration of Any Central Camera},
+  booktitle = {ICCV},
+  year      = {2025},
 }
 ```

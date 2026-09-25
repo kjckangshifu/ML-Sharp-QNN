@@ -23,6 +23,7 @@ import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.Cancel
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.UploadFile
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -53,6 +54,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.sharp.qnn.R
 import com.sharp.qnn.SHARPApplication
 import com.sharp.qnn.data.ModelEntry
+import com.sharp.qnn.data.ModelFormat
 import com.sharp.qnn.data.ModelStatus
 import com.sharp.qnn.data.ModelType
 import com.sharp.qnn.data.ModelDownloader
@@ -96,6 +98,28 @@ class ModelsViewModel(app: Application) : AndroidViewModel(app) {
 
     private val _downloading = androidx.compose.runtime.mutableStateOf(false)
     val downloading: androidx.compose.runtime.State<Boolean> = _downloading
+
+    // ====== AnyCalib download state ======
+    private val _acDownloadProgress = androidx.compose.runtime.mutableStateOf<DownloadProgress?>(null)
+    val acDownloadProgress: androidx.compose.runtime.State<DownloadProgress?> = _acDownloadProgress
+
+    private val _acDownloading = androidx.compose.runtime.mutableStateOf(false)
+    val acDownloading: androidx.compose.runtime.State<Boolean> = _acDownloading
+
+    // ====== Compile-All state ======
+    data class CompileAllState(
+        val running: Boolean = false,
+        val currentModel: ModelType? = null,
+        val currentIndex: Int = 0,
+        val totalCount: Int = 0,
+        val successCount: Int = 0,
+        val failCount: Int = 0
+    )
+
+    private val _compileAllState = androidx.compose.runtime.mutableStateOf(CompileAllState())
+    val compileAllState: androidx.compose.runtime.State<CompileAllState> = _compileAllState
+
+    private val _compileAllCancelled = java.util.concurrent.atomic.AtomicBoolean(false)
 
     private val downloader = ModelDownloader(app)
 
@@ -145,6 +169,134 @@ class ModelsViewModel(app: Application) : AndroidViewModel(app) {
      */
     fun cancelDownload() {
         downloader.cancel()
+    }
+
+    /**
+     * 下载 AnyCalib FP16 模型 (单文件)。
+     * Download the AnyCalib FP16 model (single file).
+     */
+    fun startAnyCalibDownload() {
+        if (_acDownloading.value) return
+        _acDownloading.value = true
+        _acDownloadProgress.value = DownloadProgress(fileName = ModelDownloader.ANYCALIB_LOCAL_FILE, downloadedBytes = 0L, totalBytes = 0L)
+
+        viewModelScope.launch {
+            val source = sharpApp.settingsRepository.settingsFlow.first().downloadSource
+
+            downloader.downloadAnyCalib(
+                source = source,
+                onProgress = { downloadedBytes, totalBytes ->
+                    _acDownloadProgress.value = _acDownloadProgress.value?.copy(
+                        downloadedBytes = downloadedBytes,
+                        totalBytes = totalBytes
+                    ) ?: DownloadProgress(
+                        fileName = ModelDownloader.ANYCALIB_LOCAL_FILE,
+                        downloadedBytes = downloadedBytes,
+                        totalBytes = totalBytes
+                    )
+                },
+                onComplete = { success ->
+                    _acDownloading.value = false
+                    _acDownloadProgress.value = null
+                    if (success) {
+                        _message.value = MsgKey.k(MsgKey.MSG_AC_DOWNLOAD_OK)
+                    }
+                    scanModels()
+                },
+                onError = { errorMsg ->
+                    _message.value = MsgKey.k(MsgKey.ERR_DOWNLOAD_FAIL, errorMsg)
+                }
+            )
+        }
+    }
+
+    /**
+     * 取消 AnyCalib 下载。
+     * Cancel the AnyCalib download.
+     */
+    fun cancelAnyCalibDownload() {
+        downloader.cancel()
+    }
+
+    /**
+     * 一键编译所有未编译的 DLC 模型 (从上到下顺序)。
+     * Compile all uncompiled DLC models sequentially (top to bottom order).
+     */
+    fun startCompileAll() {
+        if (_compileAllState.value.running) return
+        _compileAllCancelled.set(false)
+
+        viewModelScope.launch {
+            val allTypes = ModelType.coreTypes + if (models.value[ModelType.ANYCALIB] != null) listOf(ModelType.ANYCALIB) else emptyList()
+            val toCompile = allTypes.filter { type ->
+                val entry = models.value[type]
+                entry != null && entry.format == ModelFormat.DLC && entry.status == ModelStatus.UNCOMPILED
+            }
+            if (toCompile.isEmpty()) {
+                _compileAllState.value = CompileAllState()
+                _message.value = MsgKey.k(MsgKey.MSG_COMPILE_ALL_NONE)
+                return@launch
+            }
+
+            _compileAllState.value = CompileAllState(running = true, totalCount = toCompile.size)
+            var successCount = 0
+            var failCount = 0
+
+            for ((index, type) in toCompile.withIndex()) {
+                if (_compileAllCancelled.get()) break
+
+                _compileAllState.value = CompileAllState(
+                    running = true,
+                    currentModel = type,
+                    currentIndex = index,
+                    totalCount = toCompile.size,
+                    successCount = successCount,
+                    failCount = failCount
+                )
+
+                val result = withContext(Dispatchers.IO) {
+                    val initResult = kotlin.runCatching { sharpApp.pipelineManager.ensureQnnInitialized() }
+                    if (initResult.isFailure) {
+                        Result.failure(initResult.exceptionOrNull() ?: RuntimeException(MsgKey.ERR_QNN_INIT_DEFAULT))
+                    } else {
+                        sharpApp.modelStore.compileModel(type)
+                    }
+                }
+
+                if (_compileAllCancelled.get()) {
+                    sharpApp.modelStore.cancelCompile(type)
+                    break
+                }
+
+                if (result.isSuccess) {
+                    successCount++
+                } else {
+                    failCount++
+                }
+            }
+
+            val finalState = CompileAllState(
+                running = false,
+                successCount = successCount,
+                failCount = failCount,
+                totalCount = toCompile.size
+            )
+            _compileAllState.value = finalState
+            _message.value = MsgKey.k(
+                MsgKey.MSG_COMPILE_ALL_DONE,
+                successCount.toString(),
+                failCount.toString()
+            )
+        }
+    }
+
+    /**
+     * 取消一键编译。
+     * Cancel the compile-all operation.
+     */
+    fun cancelCompileAll() {
+        _compileAllCancelled.set(true)
+        _compileAllState.value.currentModel?.let { sharpApp.modelStore.cancelCompile(it) }
     }
 
     // Locale-wrapped context for the current language (message-key arguments)
@@ -221,6 +373,9 @@ fun ModelsScreen(
     val message by vm.message
     val downloadProgress by vm.downloadProgress
     val downloading by vm.downloading
+    val acDownloadProgress by vm.acDownloadProgress
+    val acDownloading by vm.acDownloading
+    val compileAllState by vm.compileAllState
     val context = LocalContext.current
 
     // Re-scan the directory on every visit; the directory is the source of truth (.bin/.dlc auto-detected)
@@ -246,7 +401,91 @@ fun ModelsScreen(
             )
         }
 
-        // ======  ======
+        // ====== Compile-All card ======
+        val allCoreModelsPresent = ModelType.coreTypes.all { type ->
+            models[type] != null && models[type]!!.status != ModelStatus.NOT_IMPORTED
+        }
+        val anycalibPresent = models[ModelType.ANYCALIB]?.let { it.status != ModelStatus.NOT_IMPORTED } ?: false
+        val hasAnyUncompiled = models.values.any { it.format == ModelFormat.DLC && it.status == ModelStatus.UNCOMPILED }
+        val uncompiledCount = models.values.count { it.format == ModelFormat.DLC && it.status == ModelStatus.UNCOMPILED }
+
+        item {
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(
+                    containerColor = if (compileAllState.running)
+                        MaterialTheme.colorScheme.primaryContainer
+                    else
+                        MaterialTheme.colorScheme.surfaceContainerLow
+                )
+            ) {
+                Column(
+                    modifier = Modifier.fillMaxWidth().padding(Spacing.lg),
+                    verticalArrangement = Arrangement.spacedBy(Spacing.sm)
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = stringResource(R.string.models_compile_all_title),
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Text(
+                                text = if (compileAllState.running)
+                                    stringResource(
+                                        R.string.models_compile_all_progress,
+                                        compileAllState.currentIndex + 1,
+                                        compileAllState.totalCount,
+                                        compileAllState.currentModel?.let { stringResource(it.nameRes) } ?: ""
+                                    )
+                                else
+                                    stringResource(R.string.models_compile_all_desc, uncompiledCount),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+
+                    if (compileAllState.running) {
+                        val rawProgress = if (compileAllState.totalCount > 0)
+                            compileAllState.currentIndex.toFloat() / compileAllState.totalCount
+                        else 0f
+                        val animatedProgress by animateFloatAsState(
+                            targetValue = rawProgress,
+                            animationSpec = spring(dampingRatio = 0.6f, stiffness = 100f),
+                            label = "compileAllProgress"
+                        )
+                        LinearProgressIndicator(
+                            progress = { animatedProgress },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        Button(
+                            onClick = { vm.cancelCompileAll() },
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = MaterialTheme.colorScheme.errorContainer,
+                                contentColor = MaterialTheme.colorScheme.onErrorContainer
+                            )
+                        ) {
+                            Icon(Icons.Filled.Cancel, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.size(Spacing.sm))
+                            Text(stringResource(R.string.models_download_cancel))
+                        }
+                    } else {
+                        Button(
+                            onClick = { vm.startCompileAll() },
+                            modifier = Modifier.fillMaxWidth(),
+                            enabled = hasAnyUncompiled
+                        ) {
+                            Icon(Icons.Filled.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.size(Spacing.sm))
+                            Text(stringResource(R.string.models_compile_all_btn))
+                        }
+                    }
+                }
+            }
+        }
+
         // ====== Pre-converted model download (P2P chunked parallel) ======
         item {
             Card(
@@ -319,10 +558,11 @@ fun ModelsScreen(
                             Text(stringResource(R.string.models_download_cancel))
                         }
                     } else {
-                        // Download button
+                        // Download button (disabled when all core models are present)
                         Button(
                             onClick = { vm.startDownload() },
-                            modifier = Modifier.fillMaxWidth()
+                            modifier = Modifier.fillMaxWidth(),
+                            enabled = !allCoreModelsPresent
                         ) {
                             Icon(Icons.Filled.Download, contentDescription = null, modifier = Modifier.size(18.dp))
                             Spacer(Modifier.size(Spacing.sm))
@@ -336,7 +576,7 @@ fun ModelsScreen(
         // Any model compiling? (while compiling, other compile buttons are disabled so only one compile runs at a time)
         val anyCompiling = models.values.any { it.status == ModelStatus.COMPILING }
 
-        items(ModelType.entries.toList()) { type ->
+        items(ModelType.coreTypes) { type ->
             ModelSlotCard(
                 type = type,
                 entry = models[type],
@@ -347,6 +587,134 @@ fun ModelsScreen(
                 onCancelCompile = { vm.cancelCompile(type) },
                 onRemove = { vm.removeModel(type) }
             )
+        }
+
+        // Extension models section
+        val extTypes = ModelType.extTypes
+        if (extTypes.isNotEmpty()) {
+            item {
+                Spacer(Modifier.size(Spacing.sm))
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.4f)
+                    )
+                ) {
+                    Column(
+                        modifier = Modifier.padding(Spacing.lg),
+                        verticalArrangement = Arrangement.spacedBy(Spacing.xs)
+                    ) {
+                        Text(
+                            text = stringResource(R.string.models_extension_title),
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onTertiaryContainer
+                        )
+                        Text(
+                            text = stringResource(R.string.models_extension_desc),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onTertiaryContainer.copy(alpha = 0.7f)
+                        )
+                    }
+                }
+            }
+
+            // ====== AnyCalib download card ======
+            item {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceContainerLow
+                    )
+                ) {
+                    Column(
+                        modifier = Modifier.fillMaxWidth().padding(Spacing.lg),
+                        verticalArrangement = Arrangement.spacedBy(Spacing.sm)
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = stringResource(R.string.models_ac_download_title),
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                                Text(
+                                    text = stringResource(R.string.models_ac_download_desc),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+
+                        if (acDownloading) {
+                            acDownloadProgress?.let { dp ->
+                                if (dp.totalBytes > 0L) {
+                                    val rawProgress = dp.downloadedBytes.toFloat() / dp.totalBytes
+                                    val animatedProgress by animateFloatAsState(
+                                        targetValue = rawProgress,
+                                        animationSpec = spring(dampingRatio = 0.6f, stiffness = 100f),
+                                        label = "acDownloadProgress"
+                                    )
+                                    Text(
+                                        text = stringResource(R.string.models_ac_download_downloading),
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                    LinearProgressIndicator(
+                                        progress = { animatedProgress },
+                                        modifier = Modifier.fillMaxWidth()
+                                    )
+                                } else {
+                                    Text(
+                                        text = stringResource(R.string.models_download_preparing),
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                    LinearProgressIndicator(
+                                        modifier = Modifier.fillMaxWidth()
+                                    )
+                                }
+                            }
+
+                            Button(
+                                onClick = { vm.cancelAnyCalibDownload() },
+                                modifier = Modifier.fillMaxWidth(),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = MaterialTheme.colorScheme.errorContainer,
+                                    contentColor = MaterialTheme.colorScheme.onErrorContainer
+                                )
+                            ) {
+                                Icon(Icons.Filled.Cancel, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Spacer(Modifier.size(Spacing.sm))
+                                Text(stringResource(R.string.models_download_cancel))
+                            }
+                        } else {
+                            Button(
+                                onClick = { vm.startAnyCalibDownload() },
+                                modifier = Modifier.fillMaxWidth(),
+                                enabled = !anycalibPresent
+                            ) {
+                                Icon(Icons.Filled.Download, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Spacer(Modifier.size(Spacing.sm))
+                                Text(stringResource(R.string.models_ac_download_btn))
+                            }
+                        }
+                    }
+                }
+            }
+
+            items(extTypes) { type ->
+                ModelSlotCard(
+                    type = type,
+                    entry = models[type],
+                    isBusy = busy == type,
+                    compileLocked = anyCompiling && models[type]?.status != ModelStatus.COMPILING,
+                    onImport = { uri -> vm.importModel(type, uri) },
+                    onCompile = { vm.compileModel(type) },
+                    onCancelCompile = { vm.cancelCompile(type) },
+                    onRemove = { vm.removeModel(type) }
+                )
+            }
         }
     }
 }
@@ -466,10 +834,10 @@ private fun ModelSlotCard(
                     modifier = Modifier.fillMaxWidth(),
                     verticalArrangement = Arrangement.spacedBy(Spacing.sm)
                 ) {
-                    // Import button
+                    // Import button (disabled when model already exists)
                     OutlinedButton(
                         onClick = { filePicker.launch("*/*") },
-                        enabled = !isBusy,
+                        enabled = !isBusy && entry == null,
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Icon(Icons.Filled.UploadFile, contentDescription = null, modifier = Modifier.size(18.dp))

@@ -65,6 +65,28 @@ size_t calculateElementCount(const std::vector<uint32_t>& dims) {
     return count;
 }
 
+// float32 -> float16 (IEEE 754 half-precision)
+// Standard conversion: extracts sign(1) | exp(5) | mantissa(10) from float32
+void float32ToFloat16(const float* src, uint16_t* dst, size_t count) {
+    for (size_t i = 0; i < count; i++) {
+        uint32_t f = *reinterpret_cast<const uint32_t*>(&src[i]);
+        uint16_t h = ((f >> 16) & 0x8000u) |
+                     ((((f & 0x7f800000u) - 0x38000000u) >> 13) & 0x7c00u) |
+                     ((f >> 13) & 0x03ffu);
+        dst[i] = h;
+    }
+}
+
+// float16 (IEEE 754 half-precision) -> float32
+void float16ToFloat32(const uint16_t* src, float* dst, size_t count) {
+    for (size_t i = 0; i < count; i++) {
+        uint32_t f = ((src[i] & 0x8000u) << 16) |
+                     (((src[i] & 0x7c00u) + 0x1C000u) << 13) |
+                     ((src[i] & 0x03ffu) << 13);
+        dst[i] = *reinterpret_cast<float*>(&f);
+    }
+}
+
 // NCHW -> NHWC transpose (float32, 4D)
 // src layout: [N][C][H][W], dst layout: [N][H][W][C]
 void nchwToNhwc(const float* src, float* dst, int n, int c, int h, int w) {

@@ -21,3 +21,4 @@ app/release/
 .externalNativeBuild/
 .DS_Store
 Thumbs.db
+.ai-memory/

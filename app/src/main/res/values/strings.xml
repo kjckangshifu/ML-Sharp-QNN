@@ -32,6 +32,9 @@
     <string name="home_image_focal_default">Default focal length (no EXIF data)</string>
     <string name="home_image_focal_unit_mm">mm</string>
     <string name="home_image_focal_unit_px">px</string>
+    <string name="home_image_focal_no_exif">No EXIF data, using 30mm default</string>
+    <string name="home_image_focal_ai_suggest">AI Suggest</string>
+    <string name="home_image_focal_restore_default">Restore Default</string>
     <string name="home_image_file_size">Size: %1$s</string>
     <string name="home_image_preview_cd">Preview</string>
     <string name="home_image_load_failed">Failed to load image</string>
@@ -78,7 +81,23 @@
     <string name="models_download_cancel">Cancel</string>
     <string name="models_download_scan_hint">Scanning models after download…</string>
 
-    <!-- ====== Status ====== -->
+    <string name="models_extension_title">Extension Models</string>
+    <string name="models_extension_desc">Optional models that enhance functionality but are not required for the core pipeline</string>
+
+    <!-- ====== Compile-All ====== -->
+    <string name="models_compile_all_title">One-Click Compilation</string>
+    <string name="models_compile_all_desc">%1$d model(s) waiting to compile</string>
+    <string name="models_compile_all_none">All models are already compiled</string>
+    <string name="models_compile_all_btn">Compile All</string>
+    <string name="models_compile_all_progress">Compiling %1$d/%2$d: %3$s</string>
+    <string name="models_compile_all_done">Compilation done: %1$d success, %2$d failed</string>
+
+    <!-- ====== Extension model download ====== -->
+    <string name="models_ac_download_title">AnyCalib FP16</string>
+    <string name="models_ac_download_desc">Download the Focal Length Estimator (FP16, ~610 MB) from HuggingFace</string>
+    <string name="models_ac_download_btn">Download FP16</string>
+    <string name="models_ac_download_downloading">Downloading focal-length model…</string>
+    <string name="msg_ac_download_ok">Focal Length Estimator downloaded successfully</string>
     <string name="status_not_imported">Not Imported</string>
     <string name="status_compiled">Compiled</string>
     <string name="status_uncompiled">Not Compiled</string>
@@ -90,6 +109,7 @@
     <string name="model_rest_a">Feature Fusion</string>
     <string name="model_rest_b">Disparity Estimation</string>
     <string name="model_rest_c">Gaussian Delta</string>
+    <string name="model_anycalib">Focal Length Estimator</string>
 
     <!-- ====== Pipeline stages ====== -->
     <string name="stage_init">Initialization</string>
@@ -297,6 +317,8 @@
     <string name="err_compile_fail">Compile failed: %1$s</string>
     <string name="msg_remove_ok">%1$s removed</string>
     <string name="err_remove_fail">Remove failed: %1$s</string>
+    <string name="err_anycalib_not_found">Focal Length Estimator model not found; download it first on the Models page</string>
+    <string name="err_anycalib_infer_failed">Focal prediction failed: %1$s</string>
     <string name="msg_cache_cleared">Cleared %1$s items, freed %2$s</string>
     <string name="msg_cache_empty">The cache is already empty</string>
     <string name="msg_deleted">Deleted %1$s file(s)</string>

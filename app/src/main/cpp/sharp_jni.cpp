@@ -50,6 +50,8 @@ static std::unique_ptr<qnn::HtpRuntime> g_ieRuntime;
 static std::unique_ptr<qnn::HtpRuntime> g_restARuntime;
 static std::unique_ptr<qnn::HtpRuntime> g_restBRuntime;
 static std::unique_ptr<qnn::HtpRuntime> g_restCRuntime;
+// Extension runtime: AnyCalib focal length estimator (optional)
+static std::unique_ptr<qnn::HtpRuntime> g_anycalibRuntime;
 static std::unique_ptr<qnn::DlcCompiler> g_dlcCompiler;
 static bool g_qnnInitialized = false;
 
@@ -322,6 +324,7 @@ static std::unique_ptr<qnn::HtpRuntime>& runtimeFor(const std::string& modelType
     if (modelType == "rest_a")  return g_restARuntime;
     if (modelType == "rest_b")  return g_restBRuntime;
     if (modelType == "rest_c")  return g_restCRuntime;
+    if (modelType == "anycalib")return g_anycalibRuntime;
     return g_peRuntime; // default
 }
 
@@ -489,6 +492,12 @@ Java_com_sharp_qnn_pipeline_QnnJni_nativeInit(JNIEnv* env, jobject thiz,
         return JNI_FALSE;
     }
 
+    // AnyCalib is optional; failure is non-fatal
+    if (initOne(g_anycalibRuntime, "ANYCALIB") != 0) {
+        LOGI("nativeInit: AnyCalib runtime init failed (optional), continuing without it");
+        g_anycalibRuntime.reset();
+    }
+
     g_dlcCompiler = std::make_unique<qnn::DlcCompiler>();
 
     // Set REST cache parameters adaptively based on available device memory
@@ -552,6 +561,7 @@ Java_com_sharp_qnn_pipeline_QnnJni_nativeDestroy(JNIEnv* env, jobject thiz) {
     if (g_restARuntime)  { g_restARuntime->freeContext();  g_restARuntime.reset(); }
     if (g_restBRuntime)  { g_restBRuntime->freeContext();  g_restBRuntime.reset(); }
     if (g_restCRuntime)  { g_restCRuntime->freeContext();  g_restCRuntime.reset(); }
+    if (g_anycalibRuntime) { g_anycalibRuntime->freeContext(); g_anycalibRuntime.reset(); }
     if (g_callbackObj) {
         env->DeleteGlobalRef(g_callbackObj);
         g_callbackObj = nullptr;
@@ -1404,6 +1414,254 @@ Java_com_sharp_qnn_pipeline_QnnJni_validateModelFile(JNIEnv* env, jobject thiz,
     }
 
     return nullptr; // valid
+}
+
+// ======  ======
+// ====== Extension: AnyCalib focal length estimator ======
+
+// Runs AnyCalib inference on a pre-resized 322x322 NCHW float32 [0,1] raw image,
+// computes fx/fy from the rays output field, and releases the model immediately.
+// Returns FloatArray(fx, fy) or null on failure.
+JNIEXPORT jfloatArray JNICALL
+Java_com_sharp_qnn_pipeline_QnnJni_runAnyCalib(JNIEnv* env, jobject thiz,
+                                                jstring jRawPath, jstring jBinPath) {
+    std::string rawPath = jstrToString(env, jRawPath);
+    std::string binPath = jstrToString(env, jBinPath);
+
+    LOGI("runAnyCalib: raw=%s bin=%s", rawPath.c_str(), binPath.c_str());
+
+    if (!g_anycalibRuntime) {
+        LOGE("runAnyCalib: AnyCalib runtime not available");
+        return nullptr;
+    }
+
+    std::string graphName;
+    int ret = g_anycalibRuntime->loadFromBinary(binPath, graphName);
+    if (ret != 0) {
+        LOGE("runAnyCalib: loadFromBinary failed: %d", ret);
+        return nullptr;
+    }
+
+    auto imgData = readRawFile(rawPath);
+    if (imgData.empty()) {
+        LOGE("runAnyCalib: failed to read raw: %s", rawPath.c_str());
+        g_anycalibRuntime->freeGraph();
+        return nullptr;
+    }
+
+    {   // Debug: log input data sanity
+        float vMin = 1e30f, vMax = -1e30f;
+        for (size_t k = 0; k < imgData.size(); k++) {
+            if (imgData[k] < vMin) vMin = imgData[k];
+            if (imgData[k] > vMax) vMax = imgData[k];
+        }
+        LOGI("runAnyCalib: input size=%zu range=[%.6f, %.6f] first: %.4f %.4f %.4f %.4f %.4f",
+             imgData.size(), vMin, vMax,
+             imgData.size() > 0 ? imgData[0] : 0.f,
+             imgData.size() > 1 ? imgData[1] : 0.f,
+             imgData.size() > 2 ? imgData[2] : 0.f,
+             imgData.size() > 10 ? imgData[10] : 0.f,
+             imgData.size() > 100 ? imgData[100] : 0.f);
+    }
+
+    const auto& inputInfos = g_anycalibRuntime->getInputInfos();
+    const auto& outputInfos = g_anycalibRuntime->getOutputInfos();
+
+    if (inputInfos.empty() || outputInfos.empty()) {
+        LOGE("runAnyCalib: tensor info empty");
+        g_anycalibRuntime->freeGraph();
+        return nullptr;
+    }
+
+    qnn::Tensor input;
+    input.name = inputInfos[0].name;
+    input.dims = inputInfos[0].dims;
+    input.data = imgData.data();
+    input.count = imgData.size();
+
+    std::vector<qnn::Tensor> outputs(outputInfos.size());
+    std::vector<std::vector<float>> outBuffers(outputInfos.size());
+    for (size_t j = 0; j < outputInfos.size(); j++) {
+        outBuffers[j].resize(qnn::calculateElementCount(outputInfos[j].dims));
+        outputs[j].name = outputInfos[j].name;
+        outputs[j].dims = outputInfos[j].dims;
+        outputs[j].data = outBuffers[j].data();
+        outputs[j].count = outBuffers[j].size();
+    }
+
+    ret = g_anycalibRuntime->execute({input}, outputs);
+    if (ret != 0) {
+        LOGE("runAnyCalib: execute failed: %d", ret);
+        g_anycalibRuntime->freeGraph();
+        return nullptr;
+    }
+
+    // 诊断：打印所有输出 tensor 并测试 NCHW vs NHWC 布局
+    // Diagnostic: test both NCHW and NHWC memory layouts
+    LOGI("runAnyCalib: %zu output tensors", outputInfos.size());
+    for (size_t j = 0; j < outputInfos.size(); j++) {
+        std::string dimStr;
+        for (size_t d = 0; d < outputInfos[j].dims.size(); d++) {
+            if (d > 0) dimStr += "x";
+            dimStr += std::to_string(outputInfos[j].dims[d]);
+        }
+        size_t elemCount = outBuffers[j].size();
+        float vMin = 1e30f, vMax = -1e30f;
+        for (size_t k = 0; k < elemCount; k++) {
+            float v = outBuffers[j][k];
+            if (v < vMin) vMin = v;
+            if (v > vMax) vMax = v;
+        }
+        LOGI("runAnyCalib: out[%zu] name='%s' dims=[%s] count=%zu range=[%.6f, %.6f]",
+             j, outputInfos[j].name.c_str(), dimStr.c_str(), elemCount, vMin, vMax);
+    }
+
+    const float* raysData = nullptr;
+    size_t raysCount = 0;
+    int raysIdx = -1;
+    for (size_t j = 0; j < outputs.size(); j++) {
+        if (outputInfos[j].name == "rays" || outputInfos[j].name.find("rays") != std::string::npos) {
+            raysData = outBuffers[j].data();
+            raysCount = outBuffers[j].size();
+            raysIdx = (int)j;
+            break;
+        }
+    }
+
+    if (!raysData || raysCount == 0) {
+        LOGE("runAnyCalib: rays output not found");
+        g_anycalibRuntime->freeGraph();
+        return nullptr;
+    }
+
+    const auto& raysInfo = outputInfos[raysIdx];
+    int H = 322, W = 322;
+    if (raysInfo.dims.size() >= 4) { H = (int)raysInfo.dims[2]; W = (int)raysInfo.dims[3]; }
+    else if (raysInfo.dims.size() >= 3) { H = (int)raysInfo.dims[1]; W = (int)raysInfo.dims[2]; }
+
+    // 用 3 种可能布局打印中心 3×3 像素的值 (debug only)
+    // Test 3 possible layouts on a 3x3 patch around center
+    int cy0 = H / 2, cx0 = W / 2;
+    LOGD("runAnyCalib: === NCHW layout (rays[ch * HW + y*W + x]) ===");
+    for (int dy = -1; dy <= 1; dy++) {
+        for (int dx = -1; dx <= 1; dx++) {
+            int sy = cy0 + dy, sx = cx0 + dx;
+            if (sy < 0 || sy >= H || sx < 0 || sx >= W) continue;
+            size_t idx = (size_t)sy * W + sx;
+            float r0 = raysData[0 * H * W + idx];
+            float r1 = raysData[1 * H * W + idx];
+            float r2 = raysData[2 * H * W + idx];
+            LOGD(" NCHW [%d,%d] = (%.4f, %.4f, %.4f)", sx, sy, r0, r1, r2);
+        }
+    }
+    LOGD("runAnyCalib: === NHWC layout (rays[(y*W + x)*3 + ch]) ===");
+    for (int dy = -1; dy <= 1; dy++) {
+        for (int dx = -1; dx <= 1; dx++) {
+            int sy = cy0 + dy, sx = cx0 + dx;
+            if (sy < 0 || sy >= H || sx < 0 || sx >= W) continue;
+            size_t base = ((size_t)sy * W + sx) * 3;
+            float r0 = raysData[base + 0];
+            float r1 = raysData[base + 1];
+            float r2 = raysData[base + 2];
+            LOGD(" NHWC [%d,%d] = (%.4f, %.4f, %.4f)", sx, sy, r0, r1, r2);
+        }
+    }
+    LOGD("runAnyCalib: === RW layout (rays[ch * W + y * HW]) ===");
+    for (int dy = -1; dy <= 1; dy++) {
+        for (int dx = -1; dx <= 1; dx++) {
+            int sy = cy0 + dy, sx = cx0 + dx;
+            if (sy < 0 || sy >= H || sx < 0 || sx >= W) continue;
+            float r0 = raysData[0 * W + sy * H + sx];
+            float r1 = raysData[1 * W + sy * H + sx];
+            float r2 = raysData[2 * W + sy * H + sx];
+            LOGD("   RW [%d,%d] = (%.4f, %.4f, %.4f)", sx, sy, r0, r1, r2);
+        }
+    }
+
+    // NCHW layout: rays[channel][y][x], not NHWC
+    size_t chStride = (size_t)H * W;
+
+    // 诊断：sequential raw scan — 看实际内存布局 (debug only)
+    // Diagnostic: sequential scan of first bytes to detect layout pattern
+    LOGD("runAnyCalib: === rays sequential scan (NCHW expected) ===");
+    for (int off = 0; off < 60; off++) {
+        float v = raysData[off];
+        if (std::abs(v) > 1e-6f) {
+            int nchC = (int)(off / chStride);
+            int nchRem = (int)(off % chStride);
+            int nchY = nchRem / W;
+            int nchX = nchRem % W;
+            LOGD(" raw[%d]=%+.6f  NCHW(ch%d,%d,%d)",
+                 off, v, nchC, nchX, nchY);
+        }
+    }
+
+    float cx = W * 0.5f;
+    float cy = H * 0.5f;
+    const float eps = 1.1920929e-7f;
+
+    // 模型输出的是未归一化射线方向 (rx, ry, rz)
+    // 需要先除 rz 得到归一化切线坐标：X = rx/rz = (x-cx)/fx, Y = ry/rz = (y-cy)/fy
+    // 然后 fx = dx / X, fy = dy / Y
+    // Model outputs raw ray directions (rx, ry, rz); normalise by rz
+    // to obtain tangent-space coordinates, then recover focal.
+    std::vector<float> fxVals, fyVals;
+    fxVals.reserve(H * W / 2);
+    fyVals.reserve(H * W / 2);
+
+    // NCHW layout: rays[channel][y][x], not NHWC
+    for (int y = 0; y < H; y++) {
+        for (int x = 0; x < W; x++) {
+            size_t pxIdx = (size_t)y * W + x;
+            float rx = raysData[0 * chStride + pxIdx];
+            float ry = raysData[1 * chStride + pxIdx];
+            float rz = raysData[2 * chStride + pxIdx];
+            if (std::abs(rz) < eps) continue;
+
+            float nx = rx / rz;  // normalised direction X = (x-cx)/fx
+            float ny = ry / rz;  // normalised direction Y = (y-cy)/fy
+            float dx = (float)x + 0.5f - cx;
+            float dy = (float)y + 0.5f - cy;
+
+            if (std::abs(nx) > eps && std::abs(dx) > 0.5f) {
+                fxVals.push_back(std::abs(dx / nx));
+            }
+            if (std::abs(ny) > eps && std::abs(dy) > 0.5f) {
+                fyVals.push_back(std::abs(dy / ny));
+            }
+        }
+    }
+
+    float fx = 0.0f, fy = 0.0f;
+    // 10%-90% percentile median (matches Python recover_focal)
+    if (!fxVals.empty()) {
+        std::sort(fxVals.begin(), fxVals.end());
+        size_t lo = fxVals.size() * 10 / 100;
+        size_t hi = fxVals.size() * 90 / 100;
+        if (hi > lo) {
+            size_t mid = lo + (hi - lo) / 2;
+            fx = fxVals[mid];
+        }
+    }
+    if (!fyVals.empty()) {
+        std::sort(fyVals.begin(), fyVals.end());
+        size_t lo = fyVals.size() * 10 / 100;
+        size_t hi = fyVals.size() * 90 / 100;
+        if (hi > lo) {
+            size_t mid = lo + (hi - lo) / 2;
+            fy = fyVals[mid];
+        }
+    }
+
+    LOGI("runAnyCalib: fx=%.2f fy=%.2f (samples: fx=%zu fy=%zu)", fx, fy, fxVals.size(), fyVals.size());
+
+    g_anycalibRuntime->freeGraph();
+
+    jfloatArray result = env->NewFloatArray(2);
+    if (!result || checkJniException(env)) return nullptr;
+    float vals[] = {fx, fy};
+    env->SetFloatArrayRegion(result, 0, 2, vals);
+    return result;
 }
 
 } // extern "C"

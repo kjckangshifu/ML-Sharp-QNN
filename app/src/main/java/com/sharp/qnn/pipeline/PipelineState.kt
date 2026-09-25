@@ -91,7 +91,7 @@ data class PipelineState(
  * 9. PLY optimization (opacity prune/SOR/kNN merge)
  */
 val DEFAULT_STAGES: List<StageState> = listOf(
-    StageState(id = -2, name = "Initialization", nameRes = R.string.stage_init, total = ModelType.entries.size),
+    StageState(id = -2, name = "Initialization", nameRes = R.string.stage_init, total = ModelType.coreTypes.size),
     StageState(id = 0, name = "Decode Image", nameRes = R.string.stage_decode, total = 4),
     StageState(id = 1, name = "Preprocess & Split Patches", nameRes = R.string.stage_pre, total = 5),
     StageState(id = 2, name = "Patch Encoding", nameRes = R.string.stage_pe, total = 35),

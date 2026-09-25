@@ -33,6 +33,7 @@
 - **多精度模型支持** — 可导入不同量化级别的 DLC 模型
 - **一键下载模型** — 从 HuggingFace 下载预转换的 DLC 模型（国内用户可切换 HF-Mirror）
 - **EXIF 感知** — 从照片元数据读取焦距，实现精确深度估计
+- **AI 焦距建议** — 对无 EXIF 的照片自动估算焦距，基于 [AnyCalib](https://github.com/javrtg/AnyCalib)
 - **双语界面** — 中文 / 英文，运行时随时切换
 - **MD3 设计** — 遵循 Material Design 3 设计规范
 
@@ -142,6 +143,12 @@
 ```bash
 HF_ENDPOINT=https://hf-mirror.com huggingface-cli download kjcpc/ML-Sharp-QNN dlc/w8a16/ --local-dir ./dlc
 ```
+
+**AnyCalib** 焦距估计模型为单独下载的扩展模型：
+
+- **仓库**: 🤗 [kjcpc/anycalib-qnn-dlc](https://hf-mirror.com/kjcpc/anycalib-qnn-dlc)
+- **精度**: FP16
+- **文件**: 1 个 DLC 文件（约 639 MB）
 
 海外用户可在设置中切换至 **HuggingFace**（huggingface.co）原始下载源。
 
@@ -258,6 +265,7 @@ output/
 | Apple SHARP | AML-R | 原始研究代码 |
 | [GaussSimplify](https://github.com/3dgscloud/GaussSimplify) | GPL 3.0 | 3D 高斯简化 |
 | [GaussForge](https://github.com/3dgscloud/GaussForge) | Apache 2.0 | 高斯泼溅 I/O 数据类型 |
+| [AnyCalib](https://github.com/javrtg/AnyCalib) | Apache 2.0 | 焦距估计 |
 
 ---
 
@@ -271,6 +279,7 @@ output/
 - Qualcomm QNN SDK — 专有许可（不随本项目分发）
 - GaussSimplify — [GPL 3.0](https://github.com/3dgscloud/GaussSimplify/blob/main/LICENSE)
 - GaussForge — [Apache 2.0](https://github.com/3dgscloud/GaussForge/blob/main/LICENSE)
+- AnyCalib — [Apache 2.0](https://github.com/javrtg/AnyCalib/blob/main/LICENSE)
 
 ---
 
@@ -281,6 +290,7 @@ output/
 - [Qualcomm AI Engine Direct SDK](https://www.qualcomm.com/developer/software/qualcomm-ai-engine-direct-sdk) — QNN HTP 运行时
 - [GaussSimplify](https://github.com/3dgscloud/GaussSimplify) — 3D 高斯简化库
 - [GaussForge](https://github.com/3dgscloud/GaussForge) — 高斯泼溅 I/O 库
+- [AnyCalib](https://github.com/javrtg/AnyCalib) — 相机焦距估计模型（Tirado-Garín & Civera, ICCV 2025）
 
 ---
 
@@ -297,5 +307,16 @@ output/
   journal    = {arXiv preprint arXiv:2512.10685},
   year       = {2025},
   url        = {https://arxiv.org/abs/2512.10685},
+}
+```
+
+以及本项目中使用的 AnyCalib 焦距估计模型：
+
+```bibtex
+@InProceedings{tirado2025anycalib,
+  author    = {Javier Tirado-Gar{\'\i}n and Javier Civera},
+  title     = {AnyCalib: On the Edge Single-Stage Calibration of Any Central Camera},
+  booktitle = {ICCV},
+  year      = {2025},
 }
 ```

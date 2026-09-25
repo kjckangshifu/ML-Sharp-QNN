@@ -27,6 +27,12 @@ void ufixed8ToFloat(const uint8_t* src, float* dst, size_t count, float scale, i
 // Element count of a tensor (product of dims)
 size_t calculateElementCount(const std::vector<uint32_t>& dims);
 
+// float32 -> float16 (IEEE 754 half-precision)
+void float32ToFloat16(const float* src, uint16_t* dst, size_t count);
+
+// float16 (IEEE 754) -> float32
+void float16ToFloat32(const uint16_t* src, float* dst, size_t count);
+
 // NCHW -> NHWC transpose (float32, 4D)
 void nchwToNhwc(const float* src, float* dst, int n, int c, int h, int w);
 

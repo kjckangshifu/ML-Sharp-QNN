@@ -41,6 +41,8 @@ class ModelDownloader(private val context: Context) {
         /** Chunked download threshold: files smaller than this use simple streaming */
         private const val CHUNK_THRESHOLD = 4 * 1024 * 1024L // 4 MB
 
+        // ====== ML-Sharp-QNN core models (5 files) ======
+
         /** HuggingFace official URL */
         private const val HG_BASE_URL = "https://huggingface.co/kjcpc/ML-Sharp-QNN/resolve/main"
 
@@ -48,6 +50,22 @@ class ModelDownloader(private val context: Context) {
         private const val HM_BASE_URL = "https://hf-mirror.com/kjcpc/ML-Sharp-QNN/resolve/main"
 
         private const val PRECISION_DIR = "dlc/w8a16"
+
+        // ====== AnyCalib extension model (1 file) ======
+
+        /** HuggingFace official URL for AnyCalib */
+        private const val HG_AC_BASE = "https://huggingface.co/kjcpc/anycalib-qnn-dlc/resolve/main"
+
+        /** HF Mirror for AnyCalib */
+        private const val HM_AC_BASE = "https://hf-mirror.com/kjcpc/anycalib-qnn-dlc/resolve/main"
+
+        private const val AC_PRECISION_DIR = "dlc/fp16"
+
+        /** AnyCalib DLC file name (remote) */
+        const val ANYCALIB_REMOTE_FILE = "anycalib_gen_fp16.dlc"
+
+        /** AnyCalib DLC file name (local, matches scanModelDirectory type code "anycalib") */
+        const val ANYCALIB_LOCAL_FILE = "anycalib.dlc"
 
         /** 5 个 DLC 模型文件名 */
         /** 5 DLC model file names */
@@ -75,6 +93,23 @@ class ModelDownloader(private val context: Context) {
          */
         fun getModelUrl(source: SettingsRepository.DownloadSource, fileName: String): String =
             "${getBaseUrl(source)}/$PRECISION_DIR/$fileName"
+
+        /**
+         * 获取 AnyCalib 模型下载基础 URL。
+         * Get the base URL for the AnyCalib model.
+         */
+        fun getAnyCalibBaseUrl(source: SettingsRepository.DownloadSource): String =
+            when (source) {
+                SettingsRepository.DownloadSource.HG -> HG_AC_BASE
+                SettingsRepository.DownloadSource.HM -> HM_AC_BASE
+            }
+
+        /**
+         * 获取 AnyCalib 模型的完整下载 URL。
+         * Get the full URL for the AnyCalib model.
+         */
+        fun getAnyCalibUrl(source: SettingsRepository.DownloadSource): String =
+            "${getAnyCalibBaseUrl(source)}/$AC_PRECISION_DIR/$ANYCALIB_REMOTE_FILE"
     }
 
     /**
@@ -183,6 +218,66 @@ class ModelDownloader(private val context: Context) {
 
         // Always call onComplete so the caller resets state
         onComplete(successCount, total)
+    }
+
+    /**
+     * 下载 AnyCalib 焦距预测模型 (单个 FP16 DLC 文件)。
+     * Download the AnyCalib focal-length estimator model (single FP16 DLC file).
+     *
+     * @param source       download source (HG / HM)
+     * @param onProgress   byte-level progress callback (downloaded, total)
+     * @param onComplete   completion callback (success) — always called
+     * @param onError      error callback (message) — does NOT reset overall state
+     */
+    suspend fun downloadAnyCalib(
+        source: SettingsRepository.DownloadSource,
+        onProgress: (downloadedBytes: Long, totalBytes: Long) -> Unit = { _, _ -> },
+        onComplete: (success: Boolean) -> Unit = { _ -> },
+        onError: (message: String) -> Unit = {}
+    ) {
+        cancelled = false
+        val base = context.getExternalFilesDir(null) ?: context.filesDir
+        val dlcDir = File(base, "sharp_models/dlc")
+        if (!dlcDir.exists()) {
+            dlcDir.mkdirs()
+        }
+
+        val url = getAnyCalibUrl(source)
+        val destFile = File(dlcDir, ANYCALIB_LOCAL_FILE)
+
+        // Skip if already downloaded and valid
+        if (destFile.exists() && destFile.length() > 0) {
+            val validateErr = QnnJni.validateModelFile(destFile.absolutePath, "dlc")
+            if (validateErr == null) {
+                onComplete(true)
+                return
+            }
+            destFile.delete()
+        }
+
+        // Probe total size via HEAD for progress bar
+        val totalSize = getFileSize(url)
+
+        try {
+            downloadFile(url, destFile) { fileBytes ->
+                onProgress(fileBytes, totalSize)
+            }
+            // Validate downloaded file
+            val validateErr = QnnJni.validateModelFile(destFile.absolutePath, "dlc")
+            if (validateErr != null) {
+                destFile.delete()
+                onError("$validateErr")
+                onComplete(false)
+                return
+            }
+            onComplete(true)
+        } catch (e: Exception) {
+            if (!cancelled) {
+                onError("${e.message ?: "Unknown error"}")
+            }
+            destFile.delete()
+            onComplete(false)
+        }
     }
 
     /**

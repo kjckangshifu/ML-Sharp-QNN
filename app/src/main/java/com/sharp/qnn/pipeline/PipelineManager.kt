@@ -87,7 +87,7 @@ class PipelineManager(
 
                 // Reset state (loadedModels is kept; already-loaded models are reused)
                 pipelineStartTime = System.currentTimeMillis()
-                val hasUncompiled = ModelType.entries.any { type ->
+                val hasUncompiled = ModelType.coreTypes.any { type ->
                     modelStore.getModel(type)?.let {
                         it.format == ModelFormat.DLC && it.status != ModelStatus.COMPILED
                     } == true
@@ -118,7 +118,7 @@ class PipelineManager(
 
                 // Start the init stage immediately so the user sees progress
                 onStageStart(PREPARE_STAGE_ID, "Initialization")
-                onProgress(PREPARE_STAGE_ID, 0, ModelType.entries.size, 0, MsgKey.DETAIL_INIT_QNN)
+                onProgress(PREPARE_STAGE_ID, 0, ModelType.coreTypes.size, 0, MsgKey.DETAIL_INIT_QNN)
 
                 // Register the callback
                 runCatching { QnnJni.setProgressCallback(this@PipelineManager) }
@@ -299,7 +299,7 @@ class PipelineManager(
     suspend fun ensureQnnInitialized() {
         if (initialized) return
         // Notify the init stage (only effective in pipeline context; harmless otherwise)
-        onProgress(PREPARE_STAGE_ID, 0, ModelType.entries.size, 0, MsgKey.DETAIL_INIT_QNN)
+        onProgress(PREPARE_STAGE_ID, 0, ModelType.coreTypes.size, 0, MsgKey.DETAIL_INIT_QNN)
         // Pin the language for this call (compile progress details use it)
         langCtx = LocaleUtil.wrap(context, settings.settingsFlow.first().language)
         val libDir = context.applicationInfo.nativeLibraryDir
@@ -331,7 +331,7 @@ class PipelineManager(
         ensureQnnInitialized()
 
         // Models to compile (DLC and not yet compiled)
-        val toCompile = ModelType.entries.filter { type ->
+        val toCompile = ModelType.coreTypes.filter { type ->
             val e = modelStore.getModel(type)
             e != null && e.format == ModelFormat.DLC && e.status != ModelStatus.COMPILED
         }
@@ -398,7 +398,7 @@ class PipelineManager(
     private suspend fun ensureReady() {
         ensureQnnInitialized()
 
-        val toCompile = ModelType.entries.filter { type ->
+        val toCompile = ModelType.coreTypes.filter { type ->
             val e = modelStore.getModel(type)
             e != null && e.format == ModelFormat.DLC && e.status != ModelStatus.COMPILED
         }
@@ -409,7 +409,7 @@ class PipelineManager(
             onStageStart(COMPILE_STAGE_ID, "Model Compilation")
         }
         var loadedCount = 0
-        for (type in ModelType.entries) {
+        for (type in ModelType.coreTypes) {
             val compileIndex = toCompile.indexOf(type)
             val alreadyLoaded = synchronized(loadedModelsLock) { loadedModels.contains(type) }
             ensureModelReady(type, compileIndex, total)
@@ -417,7 +417,7 @@ class PipelineManager(
                 loadedCount++
                 onProgress(
                     PREPARE_STAGE_ID,
-                    loadedCount, ModelType.entries.size,
+                    loadedCount, ModelType.coreTypes.size,
                     System.currentTimeMillis() - pipelineStartTime,
                     MsgKey.k(MsgKey.DETAIL_LOADING_MODEL, modelName(type))
                 )

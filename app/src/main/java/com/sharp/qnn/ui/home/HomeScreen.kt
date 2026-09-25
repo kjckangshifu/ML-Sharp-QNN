@@ -94,6 +94,7 @@ import com.sharp.qnn.ui.components.ProgressCard
 import com.sharp.qnn.util.FileUtil
 import com.sharp.qnn.util.FileUtil.formatDuration
 import com.sharp.qnn.util.FileUtil.formatFileSize
+import com.sharp.qnn.pipeline.QnnJni
 import com.sharp.qnn.util.MsgKey
 import com.sharp.qnn.util.i18nMessage
 import com.sharp.qnn.util.resolveMessage
@@ -101,12 +102,14 @@ import com.sharp.qnn.ui.theme.Spacing
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import android.graphics.Bitmap
+import java.io.DataOutputStream
 
 /**
- * 主页 ViewModel：持有 Pipeline 状态、模型就绪情况与选中的图片。
+ * 主页 ViewModel：持�?Pipeline 状态、模型就绪情况与选中的图片�?
  * Home view model: holds pipeline state, model readiness and the selected image.
  *
- * 图片 Uri 持有在 ViewModel 中, 切换页面不会丢失。
+ * 图片 Uri 持有�?ViewModel �? 切换页面不会丢失�?
  * The image Uri lives in the ViewModel, so it survives page switches.
  */
 class HomeViewModel(app: Application) : AndroidViewModel(app) {
@@ -128,15 +131,16 @@ class HomeViewModel(app: Application) : AndroidViewModel(app) {
         val width: Int,
         val height: Int,
         val format: String,
-        val focalLength: Float? = null,  // mm
+        val focalLength: Float? = null,      // actual mm from EXIF
+        val focalLength35mm: Float? = null,  // 35mm-equivalent from EXIF
         val fileSize: Long = 0
     )
 
     // Focal length unit for the editable field
     enum class FocalUnit { MM, PX }
 
-    // Focal length editor state — persisted across photo changes
-    // 焦距编辑器状态 — 换图时重置
+    // Focal length editor state �?persisted across photo changes
+    // 焦距编辑器状�?�?换图时重�?
     private val _focalValue = mutableStateOf("")          // current text in the field
     val focalValue: State<String> = _focalValue
     private val _focalUnit = mutableStateOf(FocalUnit.MM) // current unit
@@ -146,57 +150,66 @@ class HomeViewModel(app: Application) : AndroidViewModel(app) {
     private var _imageWidth = 0   // for mm↔px conversion
     private var _imageHeight = 0  // for mm↔px conversion
 
+    // Original EXIF focal length (saved for restore)
+    private var _savedExifFocalMm: Float? = null
+
+    // AnyCalib AI suggest running state
+    private val _anyCalibRunning = mutableStateOf(false)
+    val anyCalibRunning: State<Boolean> = _anyCalibRunning
+
     companion object {
-        /** 全画幅对角线 (mm) = sqrt(36² + 24²) — matches C side compute_fpx() */
-        /** Full-frame diagonal (mm) = sqrt(36² + 24²) — matches C side compute_fpx() */
+        /** 全画幅对角线 (mm) = sqrt(36² + 24²) �?matches C side compute_fpx() */
+        /** Full-frame diagonal (mm) = sqrt(36² + 24²) �?matches C side compute_fpx() */
         private const val FULL_FRAME_DIAGONAL_MM = 43.2666
         /** Default focal length when EXIF is unavailable */
-        /** 无 EXIF 数据时的默认焦距 */
+        /** �?EXIF 数据时的默认焦距 */
         private const val DEFAULT_FOCAL_MM = 30.0
     }
 
-    /** Convert mm focal length to pixel focal length using image dimensions. */
-    /** 用图片尺寸把 mm 焦距转为像素焦距。 */
+    /** Convert mm focal length to pixel focal length using image dimensions
+     *  and the actual sensor diagonal (not full-frame). */
+    /** 用图片尺寸和实际传感器对角线�?mm 焦距转为像素焦距�?*/
     private fun mmToPx(mm: Double, w: Int, h: Int): Double {
         if (w <= 0 || h <= 0) return mm * 1000.0  // degenerate fallback
         val diagPx = kotlin.math.sqrt((w * w + h * h).toDouble())
-        return mm * diagPx / FULL_FRAME_DIAGONAL_MM
+        return mm * diagPx / computeSensorDiagMm()
     }
 
-    /** Convert pixel focal length to mm focal length using image dimensions. */
-    /** 用图片尺寸把像素焦距转为 mm 焦距。 */
+    /** Convert pixel focal length to mm focal length using image dimensions
+     *  and the actual sensor diagonal (not full-frame). */
+    /** 用图片尺寸和实际传感器对角线把像素焦距转�?mm 焦距�?*/
     private fun pxToMm(px: Double, w: Int, h: Int): Double {
         if (w <= 0 || h <= 0) return px / 1000.0
         val diagPx = kotlin.math.sqrt((w * w + h * h).toDouble())
-        return px * FULL_FRAME_DIAGONAL_MM / diagPx
+        return px * computeSensorDiagMm() / diagPx
     }
 
     /** Toggle the focal unit between mm and px, converting the displayed value in-place. */
-    /** 在 mm 和 px 之间切换焦距单位, 同时转换显示值。 */
+    /** �?mm �?px 之间切换焦距单位, 同时转换显示值�?*/
     fun toggleFocalUnit() {
         val current = _focalValue.value.toDoubleOrNull() ?: return
         val w = _imageWidth
         val h = _imageHeight
         if (_focalUnit.value == FocalUnit.MM) {
             val px = mmToPx(current, w, h)
-            _focalValue.value = "%.1f".format(px)
+            _focalValue.value = "%.2f".format(px)
             _focalUnit.value = FocalUnit.PX
         } else {
             val mm = pxToMm(current, w, h)
-            _focalValue.value = "%.1f".format(mm)
+            _focalValue.value = "%.2f".format(mm)
             _focalUnit.value = FocalUnit.MM
         }
     }
 
     /** Called when the user types in the focal field. */
-    /** 用户在输入框中修改焦距时调用。 */
+    /** 用户在输入框中修改焦距时调用�?*/
     fun setFocalValue(value: String) {
         _focalValue.value = value
         _focalIsManual.value = true
     }
 
     /** Returns the user-overridden f_px, or null if the value is unchanged / invalid. */
-    /** 返回用户覆盖的像素焦距, 如果未修改或值无效则返回 null。 */
+    /** 返回用户覆盖的像素焦�? 如果未修改或值无效则返回 null�?*/
     fun getOverrideFpx(): Float? {
         if (!_focalIsManual.value) return null
         val v = _focalValue.value.toDoubleOrNull() ?: return null
@@ -208,6 +221,125 @@ class HomeViewModel(app: Application) : AndroidViewModel(app) {
         } else {
             v.toFloat()
         }
+    }
+
+    /** AnyCalib AI 建议焦距：用 AnyCalib 模型预测焦距并填入编辑框�?*/
+    /** AI Suggest: run AnyCalib model to predict focal length and fill editor. */
+    fun onAiSuggestFocal() {
+        if (_anyCalibRunning.value) return
+        val uri = _selectedImageUri.value ?: return
+
+        val anycalib = sharpApp.modelStore.getModel(ModelType.ANYCALIB)
+        val anycalibBin = anycalib?.runtimeBinPath
+        if (anycalibBin == null) {
+            _exportMessage.value = MsgKey.k(MsgKey.ERR_ANYCALIB_NOT_FOUND)
+            return
+        }
+
+        _anyCalibRunning.value = true
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                // 确保 QNN 运行时已初始化（AnyCalib 需要原生运行时�?
+                // Ensure QNN runtime is initialized (AnyCalib needs the native runtime)
+                sharpApp.pipelineManager.ensureQnnInitialized()
+
+                val rawPath = prepareAnyCalibRaw(uri)
+                if (rawPath == null) {
+                    withContext(Dispatchers.Main) {
+                        _anyCalibRunning.value = false
+                        _exportMessage.value = MsgKey.ERR_PREP_NULL
+                    }
+                    return@launch
+                }
+
+                val result = QnnJni.runAnyCalib(rawPath, anycalibBin)
+                File(rawPath).delete()
+
+                if (result != null && result.size >= 2 && result[0] > 0 && result[1] > 0) {
+                    val fx = result[0]
+                    val fy = result[1]
+                    val focalPx322 = (fx + fy) / 2f
+                    val w = _imageWidth
+                    val h = _imageHeight
+                    val cropSize = minOf(w, h)
+                    val focalPxImage = focalPx322 * cropSize / 322f
+                    val sensorDiagMm = computeSensorDiagMm()
+                    val diagPx = kotlin.math.sqrt((w * w + h * h).toDouble())
+                    val focalMm = focalPxImage * sensorDiagMm / diagPx
+                    withContext(Dispatchers.Main) {
+                        _focalValue.value = "%.2f".format(focalMm)
+                        _focalUnit.value = FocalUnit.MM
+                        _focalIsManual.value = true
+                        _anyCalibRunning.value = false
+                    }
+                } else {
+                    withContext(Dispatchers.Main) {
+                        _anyCalibRunning.value = false
+                        _exportMessage.value = MsgKey.k(MsgKey.ERR_ANYCALIB_INFER_FAILED, "null result")
+                    }
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    _anyCalibRunning.value = false
+                    _exportMessage.value = MsgKey.k(MsgKey.ERR_ANYCALIB_INFER_FAILED, e.message ?: "")
+                }
+            }
+        }
+    }
+
+    /** Compute actual sensor diagonal (mm) from EXIF. Falls back to full-frame when EXIF
+     *  FocalLength / FocalLengthIn35mmFilm are unavailable. */
+    private fun computeSensorDiagMm(): Float {
+        val d = _imageDetails.value ?: return FULL_FRAME_DIAGONAL_MM.toFloat()
+        val a = d.focalLength ?: return FULL_FRAME_DIAGONAL_MM.toFloat()
+        val e = d.focalLength35mm ?: return FULL_FRAME_DIAGONAL_MM.toFloat()
+        if (e <= 0f) return FULL_FRAME_DIAGONAL_MM.toFloat()
+        return a / e * FULL_FRAME_DIAGONAL_MM.toFloat()
+    }
+
+    /** 恢复焦距为图片默认值（EXIF �?30mm）�?*/
+    /** Restore focal length to image default (EXIF or 30mm). */
+    fun onRestoreDefaultFocal() {
+        val mm = _savedExifFocalMm ?: DEFAULT_FOCAL_MM.toFloat()
+        _focalValue.value = "%.2f".format(mm)
+        _focalUnit.value = FocalUnit.MM
+        _focalIsManual.value = false
+    }
+
+    /** Preprocess image to 322×322 NCHW raw for AnyCalib. Returns raw file path or null. */
+    private fun prepareAnyCalibRaw(uri: Uri): String? {
+        val resolver = sharpApp.contentResolver
+        val opts = BitmapFactory.Options().apply {
+            inPreferredConfig = Bitmap.Config.ARGB_8888
+        }
+        val src = resolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, opts) }
+            ?: return null
+
+        // Center crop to square, then resize to 322×322 (matching training preprocessing)
+        val w = src.width
+        val h = src.height
+        val s = minOf(w, h)
+        val cropped = Bitmap.createBitmap(src, (w - s) / 2, (h - s) / 2, s, s)
+        src.recycle()
+        val scaled = Bitmap.createScaledBitmap(cropped, 322, 322, true)
+        cropped.recycle()
+
+        val pixels = IntArray(322 * 322)
+        scaled.getPixels(pixels, 0, 322, 0, 0, 322, 322)
+        scaled.recycle()
+
+        val outFile = File(sharpApp.cacheDir, "anycalib_input.raw")
+        val buf = java.nio.ByteBuffer.allocate(3 * 322 * 322 * 4)
+            .order(java.nio.ByteOrder.LITTLE_ENDIAN)
+        for (c in 0 until 3) {
+            val shift = 16 - c * 8
+            for (i in pixels.indices) {
+                val v = ((pixels[i] shr shift) and 0xFF) / 255.0f
+                buf.putFloat(v)
+            }
+        }
+        outFile.outputStream().use { os -> os.write(buf.array()) }
+        return outFile.absolutePath
     }
 
     private val _imageDetails = mutableStateOf<ImageDetails?>(null)
@@ -230,6 +362,8 @@ class HomeViewModel(app: Application) : AndroidViewModel(app) {
         _focalIsManual.value = false
         _imageWidth = 0
         _imageHeight = 0
+        _savedExifFocalMm = null
+        _anyCalibRunning.value = false
 
         // Clear previous inference artifacts (excluding exported PLY) when re-selecting an image
         // Clear previous inference products and remnants when reselecting
@@ -256,11 +390,12 @@ class HomeViewModel(app: Application) : AndroidViewModel(app) {
                     details?.let { d ->
                         _imageWidth = d.width
                         _imageHeight = d.height
+                        _savedExifFocalMm = d.focalLength?.takeIf { it > 0 }
                         if (d.focalLength != null && d.focalLength > 0) {
-                            _focalValue.value = "%.1f".format(d.focalLength)
+                            _focalValue.value = "%.2f".format(d.focalLength)
                             _focalUnit.value = FocalUnit.MM
                         } else {
-                            _focalValue.value = "%.1f".format(DEFAULT_FOCAL_MM)
+                            _focalValue.value = "%.2f".format(DEFAULT_FOCAL_MM)
                             _focalUnit.value = FocalUnit.MM
                         }
                         _focalIsManual.value = false
@@ -287,20 +422,23 @@ class HomeViewModel(app: Application) : AndroidViewModel(app) {
 
             // EXIF focal length (JPEG only)
             var focal: Float? = null
+            var focal35mm: Float? = null
             if (format == "JPEG" || format == "JPG") {
                 val exif = ExifInterface(java.io.ByteArrayInputStream(bytes))
                 val focalVal = exif.getAttributeDouble(ExifInterface.TAG_FOCAL_LENGTH, 0.0)
                 if (focalVal > 0.0) focal = focalVal.toFloat()
+                val focal35Val = exif.getAttributeDouble(ExifInterface.TAG_FOCAL_LENGTH_IN_35MM_FILM, 0.0)
+                if (focal35Val > 0.0) focal35mm = focal35Val.toFloat()
             }
 
-            ImageDetails(width, height, format, focal, size)
+            ImageDetails(width, height, format, focal, focal35mm, size)
         } catch (e: Exception) {
             null
         }
     }
 
     /** Runs the full inference pipeline, forwarding any user-overridden focal length. */
-    /** 启动推理管线, 如果用户覆盖了焦距则传入。 */
+    /** 启动推理管线, 如果用户覆盖了焦距则传入�?*/
     fun runPipeline(imageUri: Uri) {
         viewModelScope.launch {
             val overrideFpx = getOverrideFpx()
@@ -415,7 +553,7 @@ fun HomeScreen(
         }
     }
 
-    val canRun = ModelType.entries.all { type ->
+    val canRun = ModelType.coreTypes.all { type ->
         val model = models[type]
         model != null && (model.format == ModelFormat.BIN || model.status == ModelStatus.COMPILED)
     } && !pipelineState.isRunning && selectedImageUri != null
@@ -509,13 +647,58 @@ fun HomeScreen(
                                                     style = MaterialTheme.typography.bodySmall,
                                                     color = MaterialTheme.colorScheme.onSecondaryContainer
                                                 )
-                                                // Focal length editor with unit toggle (mm ↔ px)
+                                                // Focal length editor with unit toggle (mm �?px)
                                                 FocalLengthField(
                                                     value = vm.focalValue.value,
                                                     unit = vm.focalUnit.value,
                                                     onValueChange = { vm.setFocalValue(it) },
                                                     onToggleUnit = { vm.toggleFocalUnit() }
                                                 )
+                                                // No-EXIF hint
+                                                if (d.focalLength == null) {
+                                                    Text(
+                                                        text = stringResource(R.string.home_image_focal_no_exif),
+                                                        style = MaterialTheme.typography.labelSmall,
+                                                        color = MaterialTheme.colorScheme.outline
+                                                    )
+                                                }
+                                                // AI Suggest + Restore Default buttons
+                                                val anycalibRunning = vm.anyCalibRunning.value
+                                                Row(
+                                                    modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                                                    horizontalArrangement = Arrangement.spacedBy(Spacing.sm)
+                                                ) {
+                                                    Button(
+                                                        onClick = { vm.onAiSuggestFocal() },
+                                                        enabled = !anycalibRunning,
+                                                        modifier = Modifier.weight(1f).height(36.dp),
+                                                        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = Spacing.sm)
+                                                    ) {
+                                                        if (anycalibRunning) {
+                                                            CircularProgressIndicator(
+                                                                modifier = Modifier.size(16.dp),
+                                                                strokeWidth = 2.dp,
+                                                                color = MaterialTheme.colorScheme.onPrimary
+                                                            )
+                                                        } else {
+                                                            Text(
+                                                                text = stringResource(R.string.home_image_focal_ai_suggest),
+                                                                style = MaterialTheme.typography.labelMedium
+                                                            )
+                                                        }
+                                                    }
+                                                    Button(
+                                                        onClick = { vm.onRestoreDefaultFocal() },
+                                                        enabled = !anycalibRunning,
+                                                        modifier = Modifier.weight(1f).height(36.dp),
+                                                        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = Spacing.sm)
+                                                    ) {
+                                                        Text(
+                                                            text = stringResource(R.string.home_image_focal_restore_default),
+                                                            style = MaterialTheme.typography.labelMedium
+                                                        )
+                                                    }
+                                                }
                                                 if (d.fileSize > 0) {
                                                     Text(
                                                         text = stringResource(R.string.home_image_file_size, formatFileSize(d.fileSize)),
@@ -617,7 +800,7 @@ fun HomeScreen(
                     }
                 }
             }
-            val missing = ModelType.entries.filter { !models.containsKey(it) }
+            val missing = ModelType.coreTypes.filter { !models.containsKey(it) }
             if (missing.isNotEmpty()) {
                 Text(
                     text = stringResource(
@@ -831,18 +1014,18 @@ fun HomeScreen(
 }
 
 /**
- * 图片预览: 从 Uri 解码 (自适应采样) 并以 fit 模式显示在矩形框内。
+ * 图片预览: �?Uri 解码 (自适应采样) 并以 fit 模式显示在矩形框内�?
  * Image preview: decodes from the Uri (with adaptive sampling) and fits it inside the box.
- * 比例不同时留黑边 (letterbox), 不裁剪填满。
+ * 比例不同时留黑边 (letterbox), 不裁剪填满�?
  * Aspect mismatches are letterboxed instead of cropped.
  *
- * 采样策略: 先用 inJustDecodeBounds 获取原始尺寸, 再根据目标视图高度 (targetHeightDp)
- * 计算最优 inSampleSize (2 的幂), 避免加载过大图片浪费内存。
+ * 采样策略: 先用 inJustDecodeBounds 获取原始尺寸, 再根据目标视图高�?(targetHeightDp)
+ * 计算最�?inSampleSize (2 的幂), 避免加载过大图片浪费内存�?
  * Sampling strategy: first reads the original dimensions via inJustDecodeBounds,
  * then computes the optimal inSampleSize (power of 2) based on the target view
  * height (targetHeightDp), avoiding excessive memory usage from oversized images.
  *
- * @param targetHeightDp 目标视图高度 (dp), 用于计算采样率, 默认 260dp
+ * @param targetHeightDp 目标视图高度 (dp), 用于计算采样�? 默认 260dp
  * @param targetHeightDp target view height (dp) for computing sample size, default 260dp
  */
 @Composable
@@ -926,13 +1109,13 @@ private fun ImagePreview(uri: Uri, modifier: Modifier = Modifier, targetHeightDp
 }
 
 /**
- * 焦距编辑栏：带单位的 OutlinedTextField + mm/px 切换 FilterChip。
+ * 焦距编辑栏：带单位的 OutlinedTextField + mm/px 切换 FilterChip�?
  * Focal length editor: OutlinedTextField with mm/px unit toggle chips.
  *
- * 输入只允许数字与小数点, 点击未选中的单位 chips 触发转换。
+ * 输入只允许数字与小数�? 点击未选中的单�?chips 触发转换�?
  * Input only allows digits and decimal point; tapping the unselected chip triggers conversion.
  *
- * @param value 当前焦距数值 (字符串)
+ * @param value 当前焦距数�?(字符�?
  * @param unit  当前单位
  * @param onValueChange 用户输入回调
  * @param onToggleUnit  切换单位回调
@@ -991,11 +1174,11 @@ private fun FocalLengthField(
 }
 
 /**
- * 计算最优 inSampleSize (2 的幂), 保证解码后高度 >= targetHeight。
+ * 计算最�?inSampleSize (2 的幂), 保证解码后高�?>= targetHeight�?
  * Computes the optimal inSampleSize (power of 2), ensuring decoded height >= targetHeight.
  *
- * 800=5 → 取 4 → 解码后 1000px, 足够清晰且省内存。
- * E.g. original 4000px, target 800px: 4000/800=5 → use 4 → decoded 1000px, sharp enough.
+ * 800=5 �?�?4 �?解码�?1000px, 足够清晰且省内存�?
+ * E.g. original 4000px, target 800px: 4000/800=5 �?use 4 �?decoded 1000px, sharp enough.
  */
 private fun calculateSampleSize(originalHeight: Int, targetHeight: Int): Int {
     if (targetHeight <= 0 || originalHeight <= targetHeight) return 1

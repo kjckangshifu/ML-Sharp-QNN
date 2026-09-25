@@ -173,6 +173,10 @@ object QnnJni {
         outPlyPath: String
     ): Boolean
 
+    /** AnyCalib 焦距预测: 输入322×322 NCHW raw, 返回 FloatArray(fx, fy) 或 null */
+    /** AnyCalib focal estimation: input 322×322 NCHW raw, returns FloatArray(fx, fy) or null */
+    external fun runAnyCalib(rawPath: String, binPath: String): FloatArray?
+
     /**
      * kNN 合并。
      * Optimize a PLY file: opacity pruning / SOR outlier removal / kNN merge via GaussSimplify.

@@ -126,6 +126,13 @@ object MsgKey {
     const val MSG_DOWNLOAD_COMPLETE = "msg_download_complete"
     const val ERR_DOWNLOAD_FAIL = "err_download_fail"
 
+    // AnyCalib
+    const val ERR_ANYCALIB_NOT_FOUND = "err_anycalib_not_found"
+    const val ERR_ANYCALIB_INFER_FAILED = "err_anycalib_infer_failed"
+    const val MSG_AC_DOWNLOAD_OK = "msg_ac_download_ok"
+    const val MSG_COMPILE_ALL_DONE = "msg_compile_all_done"
+    const val MSG_COMPILE_ALL_NONE = "msg_compile_all_none"
+
     // progress-detail keys
     const val DETAIL_INIT_QNN = "detail_init_qnn"
     const val DETAIL_LOADING_MODEL = "detail_loading_model"
@@ -209,6 +216,11 @@ internal val messageResIds: Map<String, Int> = mapOf(
     MsgKey.MSG_DELETED to R.string.msg_deleted,
     MsgKey.MSG_DOWNLOAD_COMPLETE to R.string.msg_download_complete,
     MsgKey.ERR_DOWNLOAD_FAIL to R.string.err_download_fail,
+    MsgKey.ERR_ANYCALIB_NOT_FOUND to R.string.err_anycalib_not_found,
+    MsgKey.ERR_ANYCALIB_INFER_FAILED to R.string.err_anycalib_infer_failed,
+    MsgKey.MSG_AC_DOWNLOAD_OK to R.string.msg_ac_download_ok,
+    MsgKey.MSG_COMPILE_ALL_DONE to R.string.models_compile_all_done,
+    MsgKey.MSG_COMPILE_ALL_NONE to R.string.models_compile_all_none,
     MsgKey.DETAIL_INIT_QNN to R.string.detail_init_qnn,
     MsgKey.DETAIL_LOADING_MODEL to R.string.detail_loading_model,
     MsgKey.DETAIL_COMPILING to R.string.detail_compiling,

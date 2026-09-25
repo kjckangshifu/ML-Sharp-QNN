@@ -938,6 +938,13 @@ int HtpRuntime::execute(const std::vector<Tensor>& inputs, std::vector<Tensor>& 
                               inputs[i].count, info->scale, info->offset);
                 t.clientBuf.data = m_inQuantBuf[i].data();
                 t.clientBuf.dataSize = inputs[i].count * sizeof(uint8_t);
+            } else if (info->dataType == QNN_DATATYPE_FLOAT_16) {
+                m_inQuantBuf[i].ensure(inputs[i].count * sizeof(uint16_t));
+                float32ToFloat16(inputs[i].data,
+                                 reinterpret_cast<uint16_t*>(m_inQuantBuf[i].data()),
+                                 inputs[i].count);
+                t.clientBuf.data = m_inQuantBuf[i].data();
+                t.clientBuf.dataSize = inputs[i].count * sizeof(uint16_t);
             } else {
                 // float32 passed through directly
                 t.clientBuf.data = inputs[i].data;
@@ -1005,6 +1012,10 @@ int HtpRuntime::execute(const std::vector<Tensor>& inputs, std::vector<Tensor>& 
                 m_outQuantBuf[i].ensure(outputs[i].count * sizeof(uint8_t));
                 t.clientBuf.data = m_outQuantBuf[i].data();
                 t.clientBuf.dataSize = outputs[i].count * sizeof(uint8_t);
+            } else if (info->dataType == QNN_DATATYPE_FLOAT_16) {
+                m_outQuantBuf[i].ensure(outputs[i].count * sizeof(uint16_t));
+                t.clientBuf.data = m_outQuantBuf[i].data();
+                t.clientBuf.dataSize = outputs[i].count * sizeof(uint16_t);
             } else {
                 t.clientBuf.data = outputs[i].data;
                 t.clientBuf.dataSize = outputs[i].count * sizeof(float);
@@ -1072,6 +1083,9 @@ int HtpRuntime::execute(const std::vector<Tensor>& inputs, std::vector<Tensor>& 
                 ufixed8ToFloat(m_outQuantBuf[i].data(),
                                outputs[i].data, outputs[i].count,
                                info->scale, info->offset);
+            } else if (info->dataType == QNN_DATATYPE_FLOAT_16) {
+                float16ToFloat32(reinterpret_cast<const uint16_t*>(m_outQuantBuf[i].data()),
+                                 outputs[i].data, outputs[i].count);
             }
             // float32 was already written directly to outputs[i].data
         }
